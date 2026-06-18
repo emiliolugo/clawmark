@@ -24,7 +24,7 @@ Install these yourself before running `clawmark`:
 | Claude CLI | >= 1.0.0 | Must be installed, on `PATH`, and authenticated |
 | Docker | >= 24.0 | Required by the SWE-bench harness |
 | Python | 3.11+ | Required by `swebench` |
-| swebench | exactly 0.0.14 | Install with `pip install swebench==0.0.14` |
+| swebench | latest | Install into the `python3` on your `PATH` with `python3 -m pip install --upgrade swebench` |
 | git | >= 2.39 | Used to clone task repos and collect diffs |
 
 Check your machine:
@@ -78,6 +78,33 @@ cargo build --release
 ./target/release/clawmark run --a variants/a.md --b variants/b.md --model sonnet --timeout-secs 300 --out out
 ./target/release/clawmark report --out out
 ```
+
+## Runtime And Budget Warnings
+
+v1 is intentionally minimal and does not enforce a turn limit, token budget, retry policy, or per-task cost cap. `--timeout-secs` is only a wall-clock timeout around each Claude invocation. A broad `CLAUDE.md` can spend the full timeout exploring the repo, installing dependencies, or running tests without producing a patch.
+
+For first e2e runs, use strict benchmark-oriented variants:
+
+```md
+You are running inside an automated benchmark. Make the smallest code change that addresses the issue.
+
+Rules:
+- Do not run the full test suite.
+- Only inspect files needed for the issue.
+- If you run tests, run at most one targeted test command.
+- Do not spend time on formatting, docs, or unrelated cleanup.
+- When a plausible minimal patch is made, stop.
+```
+
+Recommended starting settings:
+
+- Use `--timeout-secs 600` for a bounded smoke test.
+- Use `--timeout-secs 1800` only when you want to give Claude enough time to solve harder tasks.
+- Use a fresh `--out` directory for every attempt.
+- Run `cargo run -- doctor` first so failures happen before any Claude calls.
+- Watch the first task before walking away; if it reaches the timeout with an empty patch, tighten your variant instructions before running all 10 invocations.
+
+Budget expectation varies heavily by model behavior. The v1 smoke run performs 10 Claude invocations, so open-ended variants can consume materially more time and usage quota than short, patch-focused variants.
 
 ## How Runs Work
 

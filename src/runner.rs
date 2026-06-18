@@ -326,16 +326,24 @@ fn is_auth_failure(stderr: &str) -> bool {
 }
 
 fn claude_argv(model: &str, workspace_path: &Path, problem_statement: &str) -> Vec<OsString> {
+    // `--add-dir` is variadic, so it must not directly precede the positional
+    // prompt or it swallows the prompt as another directory. The trailing `--`
+    // terminates option parsing so the problem statement is always received as
+    // the prompt, even if it starts with `-`.
+    //
+    // `--bare` is intentionally NOT used: it disables CLAUDE.md auto-discovery
+    // (which defeats clawmark's variant injection) and forces ANTHROPIC_API_KEY
+    // auth, ignoring the user's OAuth/keychain login.
     vec![
         OsString::from("-p"),
         OsString::from("--output-format"),
         OsString::from("json"),
         OsString::from("--dangerously-skip-permissions"),
-        OsString::from("--bare"),
         OsString::from("--model"),
         OsString::from(model),
         OsString::from("--add-dir"),
         workspace_path.as_os_str().to_os_string(),
+        OsString::from("--"),
         OsString::from(problem_statement),
     ]
 }
@@ -394,7 +402,7 @@ fn harness_argv(predictions: &Path, run_id: &str, timeout_secs: u64) -> Vec<OsSt
         OsString::from("-m"),
         OsString::from("swebench.harness.run_evaluation"),
         OsString::from("--dataset_name"),
-        OsString::from("SWE-bench/SWE-bench_Lite"),
+        OsString::from("princeton-nlp/SWE-bench_Lite"),
         OsString::from("--split"),
         OsString::from("test"),
         OsString::from("--predictions_path"),
@@ -441,11 +449,11 @@ mod tests {
             "--output-format",
             "json",
             "--dangerously-skip-permissions",
-            "--bare",
             "--model",
             "sonnet",
             "--add-dir",
             "/tmp/ws",
+            "--",
             "fix the bug",
         ]
         .iter()
@@ -470,7 +478,7 @@ mod tests {
         assert_eq!(strings[pred_idx + 1], "/abs/out/predictions/a.jsonl");
 
         let dataset_idx = find("--dataset_name").expect("dataset flag");
-        assert_eq!(strings[dataset_idx + 1], "SWE-bench/SWE-bench_Lite");
+        assert_eq!(strings[dataset_idx + 1], "princeton-nlp/SWE-bench_Lite");
 
         let split_idx = find("--split").expect("split flag");
         assert_eq!(strings[split_idx + 1], "test");

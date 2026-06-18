@@ -106,12 +106,12 @@ fn check_swebench_version() -> CheckResult {
         .args(["-c", "import swebench; print(swebench.__version__)"])
         .output()
     {
-        Ok(output) if output.status.success() && stdout_text(&output).trim() == "0.0.14" => {
-            pass("swebench 0.0.14", "0.0.14")
+        Ok(output) if output.status.success() && !stdout_text(&output).trim().is_empty() => {
+            pass("swebench", stdout_text(&output).trim())
         }
         _ => fail(
-            "swebench 0.0.14",
-            "swebench 0.0.14 required. Install: pip install swebench==0.0.14",
+            "swebench",
+            "swebench required. Install: python3 -m pip install --upgrade swebench",
         ),
     }
 }
