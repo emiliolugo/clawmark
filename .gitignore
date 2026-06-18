@@ -1,3 +1,7 @@
 /target
 /out
+/out-e2e*
+/variants
+/scripts
+.venv
 PLAN.md

@@ -1,5 +1,9 @@
+use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
+
+const DOCKER_REGISTRY_HOST: &str = "registry-1.docker.io";
+const DOCKER_REGISTRY_PORT: u16 = 443;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckStatus {
@@ -35,6 +39,7 @@ pub fn collect_check_results() -> Vec<CheckResult> {
         check_swebench_version(),
         check_harness_cli(),
         check_git_present(),
+        check_docker_registry_reachable(),
         check_swebench_docker_image(),
     ]
 }
@@ -138,6 +143,36 @@ fn check_git_present() -> CheckResult {
     }
 }
 
+fn check_docker_registry_reachable() -> CheckResult {
+    match registry_reachable(Duration::from_secs(5)) {
+        Ok(()) => pass(
+            "Docker registry reachable",
+            "registry-1.docker.io:443 reachable",
+        ),
+        Err(reason) => CheckResult {
+            name: "Docker registry reachable",
+            status: CheckStatus::Warn,
+            message: format!(
+                "Cannot reach registry-1.docker.io:443 ({reason}). \
+                 The harness pulls SWE-bench images from Docker Hub; if Docker's \
+                 own DNS is broken (e.g. `lookup registry-1.docker.io: no such host`) \
+                 runs will fail. Check your network/VPN and Docker Desktop DNS settings."
+            ),
+        },
+    }
+}
+
+fn registry_reachable(timeout: Duration) -> Result<(), String> {
+    let addr = (DOCKER_REGISTRY_HOST, DOCKER_REGISTRY_PORT)
+        .to_socket_addrs()
+        .map_err(|e| format!("DNS lookup failed: {e}"))?
+        .next()
+        .ok_or_else(|| "DNS lookup returned no addresses".to_string())?;
+    TcpStream::connect_timeout(&addr, timeout)
+        .map(|_| ())
+        .map_err(|e| format!("TCP connect failed: {e}"))
+}
+
 fn check_swebench_docker_image() -> CheckResult {
     match Command::new("docker")
         .args(["images", "-q", "swebench/sweb.eval.x86_64"])
@@ -235,7 +270,7 @@ fn render_status_table(results: &[CheckResult]) {
             CheckStatus::Fail => "FAIL",
             CheckStatus::Warn => "WARN",
         };
-        println!("{:<24} {status:<4} {}", result.name, result.message);
+        println!("{:<25} {status:<4} {}", result.name, result.message);
     }
 }
 

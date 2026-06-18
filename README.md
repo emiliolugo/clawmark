@@ -119,7 +119,7 @@ For each task and variant, `clawmark`:
 Claude is invoked locally with:
 
 ```sh
-claude -p --output-format json --dangerously-skip-permissions --bare --model <model> --add-dir <workspace> <problem_statement>
+claude -p --output-format json --dangerously-skip-permissions --model <model> --add-dir <workspace> -- <problem_statement>
 ```
 
 After all predictions are written for a variant, `clawmark` invokes the SWE-bench harness once for A and once for B. The report treats the harness `resolved_ids` arrays as the source of truth.
@@ -130,7 +130,7 @@ After all predictions are written for a variant, `clawmark` invokes the SWE-benc
 clawmark doctor
 ```
 
-Checks Docker, Claude CLI, Claude authentication, Python, `swebench`, the SWE-bench harness CLI, git, and whether the SWE-bench Docker image is already present.
+Checks Docker, Claude CLI, Claude authentication, Python, `swebench`, the SWE-bench harness CLI, git, Docker Hub registry reachability, and whether the SWE-bench Docker image is already present.
 
 ```sh
 clawmark run --a <path> --b <path> --model <model> --timeout-secs <seconds> --out <dir>
@@ -194,6 +194,12 @@ Claude runs on the host, not in a container. The command uses `--dangerously-ski
 SWE-bench test execution runs inside Docker through the official harness. The model-generated patch is evaluated by the harness; `clawmark` does not execute the patch directly on the host.
 
 `clawmark` mitigates shell injection by using subprocess argv arrays, variant path traversal by canonicalizing and checking paths against the current working directory, and partial write corruption with atomic file writes. It does not prevent malicious model behavior from accessing host files, environment variables, network resources, or other local credentials available to the process.
+
+## Troubleshooting
+
+- **`No instances to run.`** — The harness filters out empty predictions. This almost always means Claude produced no patch (often from too small a `--timeout-secs`). Use a generous timeout (e.g. `--timeout-secs 600`) and a fresh `--out` directory, then inspect `run_records.jsonl` to confirm patches are non-empty.
+- **`lookup registry-1.docker.io: no such host` / Docker image pull errors** — Docker cannot resolve Docker Hub, so the harness cannot pull SWE-bench images. `clawmark doctor` flags this with the "Docker registry reachable" check. Fix your network/VPN and Docker Desktop DNS settings, then retry. This is an environment issue, not a clawmark bug.
+- **Hugging Face `404` lines during dataset load** — These are normal probes the `datasets` library makes for optional files (e.g. `SWE-bench_Lite.py`, `dataset_infos.json`). They are not errors and do not affect the run.
 
 ## Telemetry
 
