@@ -3,6 +3,12 @@ name = "clawmark"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.79"
+description = "A local Rust CLI that A/B tests two CLAUDE.md files against a SWE-bench Lite smoke set."
+license = "MIT"
+repository = "https://github.com/emiliolugo/clawmark"
+readme = "README.md"
+keywords = ["swe-bench", "benchmark", "claude", "cli", "ab-testing"]
+categories = ["command-line-utilities", "development-tools"]
 
 [features]
 integration = []

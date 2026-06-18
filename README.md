@@ -204,3 +204,12 @@ SWE-bench test execution runs inside Docker through the official harness. The mo
 ## Telemetry
 
 `clawmark` does not send telemetry or usage data. Claude and SWE-bench may perform their own network activity as part of their normal operation.
+
+## Contributing
+
+Pull requests are welcome. For major changes or new features, open an issue
+first to discuss the change — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## License
+
+Licensed under the [MIT License](./LICENSE).
