@@ -4,6 +4,5 @@
 /variants
 /scripts
 .venv
-PLAN.md
-AGENTS.md
-CLAUDE.md
+.planning/
+AGENTS.local.md
