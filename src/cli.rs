@@ -39,6 +39,8 @@ pub struct RunArgs {
     pub timeout_secs: u64,
     #[arg(long)]
     pub out: PathBuf,
+    #[arg(long)]
+    pub parallel: Option<u16>,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -75,12 +77,19 @@ impl RunArgs {
 
         validate_run_out_dir(&self.out)?;
 
+        let parallel = match self.parallel {
+            None => 1,
+            Some(0) => return Err("--parallel must be at least 1".to_string()),
+            Some(n) => usize::from(n),
+        };
+
         Ok(ValidatedRunArgs {
             a_canonical,
             b_canonical,
             model: model.to_string(),
             timeout_secs: self.timeout_secs,
             out: self.out.clone(),
+            parallel,
         })
     }
 }
@@ -92,6 +101,7 @@ pub struct ValidatedRunArgs {
     pub model: String,
     pub timeout_secs: u64,
     pub out: PathBuf,
+    pub parallel: usize,
 }
 
 impl ReportArgs {
@@ -182,6 +192,7 @@ mod tests {
             model: "sonnet".to_string(),
             timeout_secs: 300,
             out: dir.join(out_name),
+            parallel: None,
         }
     }
 
@@ -244,6 +255,7 @@ mod tests {
             model: "   ".to_string(),
             timeout_secs: 300,
             out: dir.path().join("out"),
+            parallel: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -262,6 +274,7 @@ mod tests {
             model: "sonnet".to_string(),
             timeout_secs: 0,
             out: dir.path().join("out"),
+            parallel: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -289,6 +302,59 @@ mod tests {
             out: dir.path().to_path_buf(),
         };
         args.validate().expect("validation should succeed");
+    }
+
+    #[test]
+    fn run_rejects_parallel_zero() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = RunArgs {
+            a,
+            b,
+            model: "sonnet".to_string(),
+            timeout_secs: 300,
+            out: dir.path().join("out"),
+            parallel: Some(0),
+        };
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("parallel"));
+    }
+
+    #[test]
+    fn run_accepts_parallel_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = RunArgs {
+            a,
+            b,
+            model: "sonnet".to_string(),
+            timeout_secs: 300,
+            out: dir.path().join("out"),
+            parallel: Some(1),
+        };
+        let validated = args.validate_with_cwd(dir.path()).expect("should accept 1");
+        assert_eq!(validated.parallel, 1);
+    }
+
+    #[test]
+    fn run_accepts_parallel_eight() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = RunArgs {
+            a,
+            b,
+            model: "sonnet".to_string(),
+            timeout_secs: 300,
+            out: dir.path().join("out"),
+            parallel: Some(8),
+        };
+        let validated = args.validate_with_cwd(dir.path()).expect("should accept 8");
+        assert_eq!(validated.parallel, 8);
     }
 
     #[test]
