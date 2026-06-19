@@ -42,9 +42,14 @@ fn main() {
         },
         Commands::Report(args) => match args.validate() {
             Ok(()) => match report::compute_report(&args.out) {
-                Ok(report) => {
-                    report::render_terminal_table(&report);
-                    if let Err(message) = report::write_report_json(&args.out, &report) {
+                Ok(computed) => {
+                    report::render_terminal_table(&computed);
+                    if args.show_patches {
+                        if let Err(message) = report::render_patches(&args.out) {
+                            eprintln!("warning: could not render patches: {message}");
+                        }
+                    }
+                    if let Err(message) = report::write_report_json(&args.out, &computed) {
                         eprintln!("error: {message}");
                         1
                     } else {

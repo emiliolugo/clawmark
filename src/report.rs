@@ -4,7 +4,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::results::{
-    load_harness_results, write_atomic_json, HarnessResult, REPORT_FILE, SCHEMA_VERSION,
+    load_harness_results, load_run_records, write_atomic_json, HarnessResult, REPORT_FILE,
+    RUN_RECORDS_FILE, SCHEMA_VERSION,
 };
 use crate::swebench::SMOKE_INSTANCE_IDS;
 
@@ -100,6 +101,44 @@ pub fn render_terminal_table(report: &Report) {
 
 pub fn write_report_json(out: &Path, report: &Report) -> Result<(), String> {
     write_atomic_json(&out.join(REPORT_FILE), report)
+}
+
+/// Print each task's model patch for both variants, truncated to 20 lines each.
+///
+/// Reads `run_records.jsonl` from `out`. Returns an error if the file is missing or unreadable.
+pub fn render_patches(out: &Path) -> Result<(), String> {
+    let records = load_run_records(&out.join(RUN_RECORDS_FILE))?;
+
+    println!();
+    println!("Patches:");
+    println!("---------");
+
+    for instance_id in SMOKE_INSTANCE_IDS {
+        println!("{instance_id}");
+        for label in ["a", "b"] {
+            println!("  [{label}]:");
+            let patch = records
+                .iter()
+                .find(|r| r.key.variant.label() == label && r.key.instance_id == instance_id)
+                .map_or("", |r| r.prediction.model_patch.as_str());
+
+            if patch.is_empty() {
+                println!("    (empty patch)");
+            } else {
+                let mut line_count = 0usize;
+                for line in patch.lines().take(20) {
+                    println!("    {line}");
+                    line_count += 1;
+                }
+                let total = patch.lines().count();
+                if total > line_count {
+                    println!("    ... ({} more lines)", total - line_count);
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

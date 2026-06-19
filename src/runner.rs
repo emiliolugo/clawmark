@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::cli::ValidatedRunArgs;
 use crate::report;
 use crate::results::{
-    append_run_record, harness_path, harness_raw_path, predictions_path, variant_hash,
-    write_predictions_jsonl, SwebenchPrediction, RUN_RECORDS_FILE, SCHEMA_VERSION,
+    append_run_record, harness_path, harness_raw_path, load_run_records, predictions_path,
+    variant_hash, write_predictions_jsonl, SwebenchPrediction, RUN_RECORDS_FILE, SCHEMA_VERSION,
 };
 use crate::sandbox;
 use crate::swebench::{self, Prediction, TaskInstance, SMOKE_INSTANCE_IDS};
@@ -138,6 +138,7 @@ pub async fn run_ab(args: &ValidatedRunArgs) -> Result<(), String> {
 
     let report = report::compute_report(&args.out)?;
     report::render_terminal_table(&report);
+    print_failure_summary(&report, &args.out);
     report::write_report_json(&args.out, &report)?;
 
     Ok(())
@@ -459,6 +460,54 @@ fn finalize_harness_summary(out: &Path, variant: VariantSlot) -> Result<(), Stri
     Ok(())
 }
 
+/// Build the list of `(variant_label, instance_id, error)` tuples for every
+/// `(variant, task)` pair that the harness did not resolve.
+///
+/// Extracted as a pure function so it can be unit-tested without I/O.
+fn collect_failure_entries(
+    report: &report::Report,
+    records: &[RunRecord],
+) -> Vec<(String, String, Option<String>)> {
+    let mut failures = Vec::new();
+    for task in &report.tasks {
+        for (label, resolved) in [("a", task.a_resolved), ("b", task.b_resolved)] {
+            if !resolved {
+                let error = records
+                    .iter()
+                    .find(|r| {
+                        r.key.variant.label() == label && r.key.instance_id == task.instance_id
+                    })
+                    .and_then(|r| r.error.clone());
+                failures.push((label.to_string(), task.instance_id.clone(), error));
+            }
+        }
+    }
+    failures
+}
+
+/// Print a failure summary after a run completes.
+///
+/// Prints nothing when every (variant, task) pair was resolved. Loads run
+/// records best-effort; a missing file silently produces an empty record list.
+fn print_failure_summary(report: &report::Report, out: &Path) {
+    let records = load_run_records(&out.join(RUN_RECORDS_FILE)).unwrap_or_default();
+    let failures = collect_failure_entries(report, &records);
+
+    if failures.is_empty() {
+        return;
+    }
+
+    println!();
+    println!("Failure summary:");
+    for (label, instance_id, error) in failures {
+        if let Some(err) = error {
+            println!("  [{label}] {instance_id}: {err}");
+        } else {
+            println!("  [{label}] {instance_id}: unresolved (patch did not pass tests)");
+        }
+    }
+}
+
 fn harness_argv(predictions: &Path, run_id: &str, timeout_secs: u64) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec![
         OsString::from("-m"),
@@ -559,6 +608,88 @@ mod tests {
         for (offset, id) in SMOKE_INSTANCE_IDS.iter().enumerate() {
             assert_eq!(&strings[ids_idx + 1 + offset], id);
         }
+    }
+
+    #[test]
+    fn collect_failure_entries_empty_when_all_resolved() {
+        use crate::report::aggregate_report;
+        use crate::results::HarnessResult;
+        use crate::swebench::SMOKE_INSTANCE_IDS;
+
+        let all_ids: Vec<String> = SMOKE_INSTANCE_IDS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let a = HarnessResult {
+            resolved_ids: all_ids.clone(),
+        };
+        let b = HarnessResult {
+            resolved_ids: all_ids,
+        };
+        let report = aggregate_report(&a, &b);
+        assert!(collect_failure_entries(&report, &[]).is_empty());
+    }
+
+    #[test]
+    fn collect_failure_entries_includes_error_from_record() {
+        use crate::report::aggregate_report;
+        use crate::results::HarnessResult;
+        use crate::swebench::Prediction;
+
+        let a = HarnessResult {
+            resolved_ids: vec![],
+        };
+        let b = HarnessResult {
+            resolved_ids: vec![],
+        };
+        let report = aggregate_report(&a, &b);
+
+        let record = RunRecord {
+            schema_version: SCHEMA_VERSION,
+            key: RunKey {
+                variant: VariantSlot::A,
+                variant_hash: "abc".to_string(),
+                instance_id: "astropy__astropy-12907".to_string(),
+            },
+            prediction: Prediction {
+                instance_id: "astropy__astropy-12907".to_string(),
+                model_patch: String::new(),
+                model_name_or_path: "clawmark/a".to_string(),
+            },
+            elapsed_secs: 1.0,
+            error: Some("claude timed out after 300s".to_string()),
+        };
+
+        let failures = collect_failure_entries(&report, &[record]);
+        let entry = failures
+            .iter()
+            .find(|(l, id, _)| l == "a" && id == "astropy__astropy-12907");
+        assert!(entry.is_some());
+        let (_, _, err) = entry.unwrap();
+        assert_eq!(err.as_deref(), Some("claude timed out after 300s"));
+    }
+
+    #[test]
+    fn collect_failure_entries_marks_no_error_when_record_missing() {
+        use crate::report::aggregate_report;
+        use crate::results::HarnessResult;
+
+        let a = HarnessResult {
+            resolved_ids: vec![],
+        };
+        let b = HarnessResult {
+            resolved_ids: vec![],
+        };
+        let report = aggregate_report(&a, &b);
+
+        // No records provided — error should be None (unresolved but no claude error)
+        let failures = collect_failure_entries(&report, &[]);
+        let entry = failures
+            .iter()
+            .find(|(l, id, _)| l == "a" && id == "astropy__astropy-12907");
+        assert!(entry.is_some());
+        let (_, _, err) = entry.unwrap();
+        assert!(err.is_none());
     }
 
     #[test]

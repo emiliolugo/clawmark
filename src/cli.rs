@@ -47,6 +47,9 @@ pub struct RunArgs {
 pub struct ReportArgs {
     #[arg(long)]
     pub out: PathBuf,
+    /// Print each task's model patch (truncated to 20 lines) after the summary table
+    #[arg(long, default_value_t = false)]
+    pub show_patches: bool,
 }
 
 impl RunArgs {
@@ -287,6 +290,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let args = ReportArgs {
             out: dir.path().to_path_buf(),
+            show_patches: false,
         };
         let err = args.validate().expect_err("expected validation error");
         assert!(err.contains("missing"));
@@ -300,6 +304,7 @@ mod tests {
         write_file(dir.path(), "harness/b.json", r#"{"resolved_ids":[]}"#);
         let args = ReportArgs {
             out: dir.path().to_path_buf(),
+            show_patches: false,
         };
         args.validate().expect("validation should succeed");
     }
