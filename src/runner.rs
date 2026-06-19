@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -73,7 +74,7 @@ enum ClaudeOutcome {
 }
 
 /// Orchestrate the full A/B run: variant A then variant B, serially.
-pub fn run_ab(args: &ValidatedRunArgs) -> Result<(), String> {
+pub async fn run_ab(args: &ValidatedRunArgs) -> Result<(), String> {
     let tasks = swebench::load_bundled_smoke_set()?;
 
     let a_contents = fs::read(&args.a_canonical).map_err(|e| {
@@ -113,22 +114,8 @@ pub fn run_ab(args: &ValidatedRunArgs) -> Result<(), String> {
 
     let run_records = args.out.join(RUN_RECORDS_FILE);
 
-    run_variant(
-        VariantSlot::A,
-        &a_hash,
-        &a_contents,
-        &tasks,
-        args,
-        &run_records,
-    )?;
-    run_variant(
-        VariantSlot::B,
-        &b_hash,
-        &b_contents,
-        &tasks,
-        args,
-        &run_records,
-    )?;
+    run_variant(VariantSlot::A, &a_hash, &a_contents, &tasks, args, &run_records).await?;
+    run_variant(VariantSlot::B, &b_hash, &b_contents, &tasks, args, &run_records).await?;
 
     invoke_harness(VariantSlot::A, &args.out, args.timeout_secs)?;
     invoke_harness(VariantSlot::B, &args.out, args.timeout_secs)?;
@@ -140,7 +127,7 @@ pub fn run_ab(args: &ValidatedRunArgs) -> Result<(), String> {
     Ok(())
 }
 
-fn run_variant(
+async fn run_variant(
     variant: VariantSlot,
     variant_hash: &str,
     variant_contents: &[u8],
@@ -149,26 +136,82 @@ fn run_variant(
     run_records: &Path,
 ) -> Result<(), String> {
     println!("== variant {} ==", variant.label());
-    let mut predictions = Vec::with_capacity(tasks.len());
+    let parallel = args.parallel;
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(parallel));
+    let write_lock = Arc::new(tokio::sync::Mutex::new(()));
+    let predictions = Arc::new(tokio::sync::Mutex::new(Vec::with_capacity(tasks.len())));
+    let variant_contents = Arc::new(variant_contents.to_vec());
+    let variant_hash = variant_hash.to_string();
+    let model = args.model.clone();
+    let timeout_secs = args.timeout_secs;
+    let run_records = run_records.to_path_buf();
+
+    let mut handles = Vec::with_capacity(tasks.len());
 
     for task in tasks {
-        println!("[{}] {}", variant.label(), task.instance_id);
-        let record = run_single(
-            variant,
-            variant_hash,
-            variant_contents,
-            task,
-            &args.model,
-            args.timeout_secs,
-        )?;
-        if let Some(err) = &record.error {
-            println!("[{}] {}: error: {err}", variant.label(), task.instance_id);
-        }
-        append_run_record(run_records, &record)?;
-        predictions.push(SwebenchPrediction::from(&record.prediction));
+        let task = task.clone();
+        let sem = Arc::clone(&semaphore);
+        let write_lock = Arc::clone(&write_lock);
+        let predictions = Arc::clone(&predictions);
+        let vc = Arc::clone(&variant_contents);
+        let vh = variant_hash.clone();
+        let model = model.clone();
+        let run_records = run_records.clone();
+
+        let handle = tokio::spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed");
+            let instance_id = task.instance_id.clone();
+            println!("[{}] {}", variant.label(), instance_id);
+
+            let record_result = tokio::task::spawn_blocking(move || {
+                run_single(variant, &vh, vc.as_slice(), &task, &model, timeout_secs)
+            })
+            .await
+            .map_err(|e| format!("task panicked: {e}"))?;
+            let record = record_result?;
+
+            if let Some(err) = &record.error {
+                println!("[{}] {}: error: {err}", variant.label(), instance_id);
+            }
+
+            {
+                let _guard = write_lock.lock().await;
+                append_run_record(&run_records, &record)?;
+            }
+
+            predictions.lock().await.push(SwebenchPrediction::from(&record.prediction));
+
+            Ok::<(), String>(())
+        });
+
+        handles.push(handle);
     }
 
-    write_predictions_jsonl(&predictions_path(&args.out, variant), &predictions)?;
+    let mut first_err: Option<String> = None;
+    for handle in handles {
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(format!("task panicked: {e}"));
+                }
+            }
+        }
+    }
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+
+    let preds = Arc::try_unwrap(predictions)
+        .expect("predictions Arc should have no other owners")
+        .into_inner();
+    write_predictions_jsonl(&predictions_path(&args.out, variant), &preds)?;
     Ok(())
 }
 
