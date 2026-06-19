@@ -5,4 +5,5 @@
 /scripts
 .venv
 .planning/
+.cursor/
 AGENTS.local.md

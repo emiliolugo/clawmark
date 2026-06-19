@@ -114,8 +114,24 @@ pub async fn run_ab(args: &ValidatedRunArgs) -> Result<(), String> {
 
     let run_records = args.out.join(RUN_RECORDS_FILE);
 
-    run_variant(VariantSlot::A, &a_hash, &a_contents, &tasks, args, &run_records).await?;
-    run_variant(VariantSlot::B, &b_hash, &b_contents, &tasks, args, &run_records).await?;
+    run_variant(
+        VariantSlot::A,
+        &a_hash,
+        &a_contents,
+        &tasks,
+        args,
+        &run_records,
+    )
+    .await?;
+    run_variant(
+        VariantSlot::B,
+        &b_hash,
+        &b_contents,
+        &tasks,
+        args,
+        &run_records,
+    )
+    .await?;
 
     invoke_harness(VariantSlot::A, &args.out, args.timeout_secs)?;
     invoke_harness(VariantSlot::B, &args.out, args.timeout_secs)?;
@@ -180,7 +196,10 @@ async fn run_variant(
                 append_run_record(&run_records, &record)?;
             }
 
-            predictions.lock().await.push(SwebenchPrediction::from(&record.prediction));
+            predictions
+                .lock()
+                .await
+                .push(SwebenchPrediction::from(&record.prediction));
 
             Ok::<(), String>(())
         });
