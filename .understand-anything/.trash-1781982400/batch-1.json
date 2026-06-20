@@ -1,0 +1,23 @@
+{
+  "batchFiles": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "language": "YAML",
+      "sizeLines": 0,
+      "fileCategory": "ci"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "pipeline:.github/workflows/ci.yml",
+      "type": "pipeline",
+      "name": "CI",
+      "filePath": ".github/workflows/ci.yml",
+      "summary": "GitHub Actions CI pipeline that triggers on every push and pull request. Runs on ubuntu-latest, installs the stable Rust toolchain with rustfmt and clippy components, then executes `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` in sequence to enforce formatting, lint, and test coverage for the clawmark CLI.",
+      "tags": ["ci", "github-actions", "rust", "cargo", "clippy", "rustfmt", "testing", "linting"],
+      "complexity": "simple",
+      "language": "YAML"
+    }
+  ],
+  "edges": []
+}

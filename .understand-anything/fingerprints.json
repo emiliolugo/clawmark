@@ -1,0 +1,1579 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "d8181ecd3afabeadcdfa65a75ebb184db1f00c3b",
+  "generatedAt": "2026-06-20T19:06:22.468Z",
+  "files": {
+    "src/main.rs": {
+      "filePath": "src/main.rs",
+      "contentHash": "90b353164da4190fcb3eb39dddcee6820dbea1068c2929921c2168579d7f9700",
+      "functions": [
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 58
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "clap",
+          "specifiers": [
+            "Parser"
+          ]
+        },
+        {
+          "source": "tokio::runtime",
+          "specifiers": [
+            "Builder"
+          ]
+        },
+        {
+          "source": "crate::cli",
+          "specifiers": [
+            "Cli",
+            "Commands"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 72,
+      "hasStructuralAnalysis": true
+    },
+    "src/cli.rs": {
+      "filePath": "src/cli.rs",
+      "contentHash": "3651745215f7346cf8f176eeec519cd99b248de22e96657444f51f278d715852",
+      "functions": [
+        {
+          "name": "validate",
+          "params": [],
+          "returnType": "Result<ValidatedRunArgs, String>",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "validate_with_cwd",
+          "params": [
+            "cwd"
+          ],
+          "returnType": "Result<ValidatedRunArgs, String>",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "validate",
+          "params": [],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "validate_variant_path",
+          "params": [
+            "path",
+            "cwd"
+          ],
+          "returnType": "Result<PathBuf, String>",
+          "exported": false,
+          "lineCount": 26
+        },
+        {
+          "name": "validate_run_out_dir",
+          "params": [
+            "out"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": false,
+          "lineCount": 22
+        },
+        {
+          "name": "validate_report_out_dir",
+          "params": [
+            "out"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": false,
+          "lineCount": 14
+        }
+      ],
+      "classes": [
+        {
+          "name": "Cli",
+          "methods": [],
+          "properties": [
+            "command"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "Commands",
+          "methods": [],
+          "properties": [
+            "Doctor",
+            "Run",
+            "Report"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "RunArgs",
+          "methods": [
+            "validate",
+            "validate_with_cwd"
+          ],
+          "properties": [
+            "a",
+            "b",
+            "model",
+            "timeout_secs",
+            "out",
+            "parallel"
+          ],
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "ReportArgs",
+          "methods": [
+            "validate"
+          ],
+          "properties": [
+            "out",
+            "show_patches"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "ValidatedRunArgs",
+          "methods": [],
+          "properties": [
+            "a_canonical",
+            "b_canonical",
+            "model",
+            "timeout_secs",
+            "out",
+            "parallel"
+          ],
+          "exported": true,
+          "lineCount": 8
+        }
+      ],
+      "imports": [
+        {
+          "source": "std",
+          "specifiers": [
+            "env"
+          ]
+        },
+        {
+          "source": "std",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "std::path",
+          "specifiers": [
+            "Path",
+            "PathBuf"
+          ]
+        },
+        {
+          "source": "clap",
+          "specifiers": [
+            "Parser",
+            "Subcommand"
+          ]
+        }
+      ],
+      "exports": [
+        "Cli",
+        "Commands",
+        "RunArgs",
+        "ReportArgs",
+        "validate",
+        "validate_with_cwd",
+        "ValidatedRunArgs",
+        "validate"
+      ],
+      "totalLines": 384,
+      "hasStructuralAnalysis": true
+    },
+    "src/doctor.rs": {
+      "filePath": "src/doctor.rs",
+      "contentHash": "9d040957a2be2eb25eb219e9a09718ae1151a6efe37213a195f937d62c68cb92",
+      "functions": [
+        {
+          "name": "run_doctor",
+          "params": [],
+          "returnType": "i32",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "collect_check_results",
+          "params": [],
+          "returnType": "Vec<CheckResult>",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "check_docker_running",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "check_claude_present",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "check_claude_authenticated",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "check_python_version",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 21
+        },
+        {
+          "name": "check_swebench_version",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "check_harness_cli",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "check_git_present",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "check_docker_registry_reachable",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "registry_reachable",
+          "params": [
+            "timeout"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "check_swebench_docker_image",
+          "params": [],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "run_command_with_timeout",
+          "params": [
+            "argv",
+            "timeout"
+          ],
+          "returnType": "Result<Output, String>",
+          "exported": false,
+          "lineCount": 30
+        },
+        {
+          "name": "stdout_text",
+          "params": [
+            "output"
+          ],
+          "returnType": "String",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "parse_python_version",
+          "params": [
+            "text"
+          ],
+          "returnType": "Option<(u32, u32)>",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "python_version_ok",
+          "params": [
+            "major",
+            "minor"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "pass",
+          "params": [
+            "name",
+            "message"
+          ],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "fail",
+          "params": [
+            "name",
+            "message"
+          ],
+          "returnType": "CheckResult",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "render_status_table",
+          "params": [
+            "results"
+          ],
+          "exported": false,
+          "lineCount": 12
+        }
+      ],
+      "classes": [
+        {
+          "name": "CheckStatus",
+          "methods": [],
+          "properties": [
+            "Pass",
+            "Fail",
+            "Warn"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "CheckResult",
+          "methods": [],
+          "properties": [
+            "name",
+            "status",
+            "message"
+          ],
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "imports": [
+        {
+          "source": "std::net",
+          "specifiers": [
+            "TcpStream",
+            "ToSocketAddrs"
+          ]
+        },
+        {
+          "source": "std::process",
+          "specifiers": [
+            "Command",
+            "Output",
+            "Stdio"
+          ]
+        },
+        {
+          "source": "std::time",
+          "specifiers": [
+            "Duration",
+            "Instant"
+          ]
+        }
+      ],
+      "exports": [
+        "CheckStatus",
+        "CheckResult",
+        "run_doctor",
+        "collect_check_results",
+        "parse_python_version",
+        "python_version_ok"
+      ],
+      "totalLines": 326,
+      "hasStructuralAnalysis": true
+    },
+    "src/runner.rs": {
+      "filePath": "src/runner.rs",
+      "contentHash": "8f31ce21f9efec62b46f80703c4b761752e634c30cadac64061ea796fe8e8e26",
+      "functions": [
+        {
+          "name": "label",
+          "params": [],
+          "returnType": "&'static str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "model_name_or_path",
+          "params": [],
+          "returnType": "&'static str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "run_id",
+          "params": [],
+          "returnType": "&'static str",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "run_ab",
+          "params": [
+            "args"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 69
+        },
+        {
+          "name": "run_variant",
+          "params": [
+            "variant",
+            "variant_hash",
+            "variant_contents",
+            "tasks",
+            "args",
+            "run_records"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": false,
+          "lineCount": 90
+        },
+        {
+          "name": "run_single",
+          "params": [
+            "variant",
+            "variant_hash",
+            "variant_contents",
+            "task",
+            "model",
+            "timeout_secs"
+          ],
+          "returnType": "Result<RunRecord, String>",
+          "exported": true,
+          "lineCount": 66
+        },
+        {
+          "name": "invoke_claude",
+          "params": [
+            "workspace_path",
+            "model",
+            "problem_statement",
+            "timeout_secs"
+          ],
+          "returnType": "ClaudeOutcome",
+          "exported": false,
+          "lineCount": 67
+        },
+        {
+          "name": "is_auth_failure",
+          "params": [
+            "stderr"
+          ],
+          "returnType": "bool",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "claude_argv",
+          "params": [
+            "model",
+            "workspace_path",
+            "problem_statement"
+          ],
+          "returnType": "Vec<OsString>",
+          "exported": false,
+          "lineCount": 22
+        },
+        {
+          "name": "invoke_harness",
+          "params": [
+            "variant",
+            "out",
+            "timeout_secs"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "finalize_harness_summary",
+          "params": [
+            "out",
+            "variant"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "collect_failure_entries",
+          "params": [
+            "report",
+            "records"
+          ],
+          "returnType": "Vec<(String, String, Option<String>)>",
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "print_failure_summary",
+          "params": [
+            "report",
+            "out"
+          ],
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "harness_argv",
+          "params": [
+            "predictions",
+            "run_id",
+            "timeout_secs"
+          ],
+          "returnType": "Vec<OsString>",
+          "exported": false,
+          "lineCount": 23
+        }
+      ],
+      "classes": [
+        {
+          "name": "VariantSlot",
+          "methods": [
+            "label",
+            "model_name_or_path",
+            "run_id"
+          ],
+          "properties": [
+            "A",
+            "B"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "RunKey",
+          "methods": [],
+          "properties": [
+            "variant",
+            "variant_hash",
+            "instance_id"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "RunRecord",
+          "methods": [],
+          "properties": [
+            "schema_version",
+            "key",
+            "prediction",
+            "elapsed_secs",
+            "error"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "ClaudeOutcome",
+          "methods": [],
+          "properties": [
+            "Ok",
+            "Auth",
+            "Other"
+          ],
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "imports": [
+        {
+          "source": "std::ffi",
+          "specifiers": [
+            "OsString"
+          ]
+        },
+        {
+          "source": "std",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "std::path",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "std::process",
+          "specifiers": [
+            "Command",
+            "Stdio"
+          ]
+        },
+        {
+          "source": "std::sync",
+          "specifiers": [
+            "Arc"
+          ]
+        },
+        {
+          "source": "std::time",
+          "specifiers": [
+            "Duration",
+            "Instant"
+          ]
+        },
+        {
+          "source": "serde",
+          "specifiers": [
+            "Deserialize",
+            "Serialize"
+          ]
+        },
+        {
+          "source": "crate::cli",
+          "specifiers": [
+            "ValidatedRunArgs"
+          ]
+        },
+        {
+          "source": "crate",
+          "specifiers": [
+            "report"
+          ]
+        },
+        {
+          "source": "crate::results",
+          "specifiers": [
+            "append_run_record",
+            "harness_path",
+            "harness_raw_path",
+            "load_run_records",
+            "predictions_path",
+            "variant_hash",
+            "write_predictions_jsonl",
+            "SwebenchPrediction",
+            "RUN_RECORDS_FILE",
+            "SCHEMA_VERSION"
+          ]
+        },
+        {
+          "source": "crate",
+          "specifiers": [
+            "sandbox"
+          ]
+        },
+        {
+          "source": "crate::swebench",
+          "specifiers": [
+            "self",
+            "Prediction",
+            "TaskInstance",
+            "SMOKE_INSTANCE_IDS"
+          ]
+        }
+      ],
+      "exports": [
+        "VariantSlot",
+        "label",
+        "model_name_or_path",
+        "RunKey",
+        "RunRecord",
+        "run_ab",
+        "run_single",
+        "invoke_harness"
+      ],
+      "totalLines": 718,
+      "hasStructuralAnalysis": true
+    },
+    "src/report.rs": {
+      "filePath": "src/report.rs",
+      "contentHash": "a1466f4832d585e025968c63bedff89088c8f23cefd8c34148b35b24d7427d93",
+      "functions": [
+        {
+          "name": "compute_report",
+          "params": [
+            "out"
+          ],
+          "returnType": "Result<Report, String>",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "aggregate_report",
+          "params": [
+            "a",
+            "b"
+          ],
+          "returnType": "Report",
+          "exported": true,
+          "lineCount": 49
+        },
+        {
+          "name": "render_terminal_table",
+          "params": [
+            "report"
+          ],
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "write_report_json",
+          "params": [
+            "out",
+            "report"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "render_patches",
+          "params": [
+            "out"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 34
+        }
+      ],
+      "classes": [
+        {
+          "name": "TaskOutcome",
+          "methods": [],
+          "properties": [
+            "instance_id",
+            "a_resolved",
+            "b_resolved"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "Report",
+          "methods": [],
+          "properties": [
+            "schema_version",
+            "total_tasks",
+            "a_resolved",
+            "b_resolved",
+            "a_wins",
+            "b_wins",
+            "ties_both_resolved",
+            "ties_both_failed",
+            "tasks"
+          ],
+          "exported": true,
+          "lineCount": 11
+        }
+      ],
+      "imports": [
+        {
+          "source": "std::collections",
+          "specifiers": [
+            "HashSet"
+          ]
+        },
+        {
+          "source": "std::path",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "serde",
+          "specifiers": [
+            "Deserialize",
+            "Serialize"
+          ]
+        },
+        {
+          "source": "crate::results",
+          "specifiers": [
+            "load_harness_results",
+            "load_run_records",
+            "write_atomic_json",
+            "HarnessResult",
+            "REPORT_FILE",
+            "RUN_RECORDS_FILE",
+            "SCHEMA_VERSION"
+          ]
+        },
+        {
+          "source": "crate::swebench",
+          "specifiers": [
+            "SMOKE_INSTANCE_IDS"
+          ]
+        }
+      ],
+      "exports": [
+        "TaskOutcome",
+        "Report",
+        "compute_report",
+        "aggregate_report",
+        "render_terminal_table",
+        "write_report_json",
+        "render_patches"
+      ],
+      "totalLines": 216,
+      "hasStructuralAnalysis": true
+    },
+    "src/results.rs": {
+      "filePath": "src/results.rs",
+      "contentHash": "4261a92c8d220e52fb67162ba257fc5eebb3a56b744d03bb34c55c8397c8bf4b",
+      "functions": [
+        {
+          "name": "from",
+          "params": [
+            "prediction"
+          ],
+          "returnType": "Self",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "variant_hash",
+          "params": [
+            "contents"
+          ],
+          "returnType": "String",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "write_atomic_json",
+          "params": [
+            "path",
+            "value"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "append_jsonl_line",
+          "params": [
+            "path",
+            "line"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "append_run_record",
+          "params": [
+            "path",
+            "record"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "write_predictions_jsonl",
+          "params": [
+            "path",
+            "predictions"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 30
+        },
+        {
+          "name": "load_run_records",
+          "params": [
+            "path"
+          ],
+          "returnType": "Result<Vec<RunRecord>, String>",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "load_harness_results",
+          "params": [
+            "path"
+          ],
+          "returnType": "Result<HarnessResult, String>",
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "predictions_path",
+          "params": [
+            "out",
+            "variant"
+          ],
+          "returnType": "PathBuf",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "harness_path",
+          "params": [
+            "out",
+            "variant"
+          ],
+          "returnType": "PathBuf",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "harness_raw_path",
+          "params": [
+            "out",
+            "variant"
+          ],
+          "returnType": "PathBuf",
+          "exported": true,
+          "lineCount": 6
+        }
+      ],
+      "classes": [
+        {
+          "name": "SwebenchPrediction",
+          "methods": [
+            "from"
+          ],
+          "properties": [
+            "instance_id",
+            "model_patch",
+            "model_name_or_path"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "HarnessResult",
+          "methods": [],
+          "properties": [
+            "resolved_ids"
+          ],
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "imports": [
+        {
+          "source": "std::fs",
+          "specifiers": [
+            "self",
+            "File",
+            "OpenOptions"
+          ]
+        },
+        {
+          "source": "std::io",
+          "specifiers": [
+            "BufRead",
+            "BufReader",
+            "Write"
+          ]
+        },
+        {
+          "source": "std::path",
+          "specifiers": [
+            "Path",
+            "PathBuf"
+          ]
+        },
+        {
+          "source": "serde",
+          "specifiers": [
+            "Deserialize",
+            "Serialize"
+          ]
+        },
+        {
+          "source": "sha2",
+          "specifiers": [
+            "Digest",
+            "Sha256"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "NamedTempFile"
+          ]
+        },
+        {
+          "source": "crate::runner",
+          "specifiers": [
+            "RunRecord",
+            "VariantSlot"
+          ]
+        },
+        {
+          "source": "crate::swebench",
+          "specifiers": [
+            "Prediction"
+          ]
+        }
+      ],
+      "exports": [
+        "SwebenchPrediction",
+        "HarnessResult",
+        "variant_hash",
+        "write_atomic_json",
+        "append_jsonl_line",
+        "append_run_record",
+        "write_predictions_jsonl",
+        "load_run_records",
+        "load_harness_results",
+        "predictions_path",
+        "harness_path",
+        "harness_raw_path"
+      ],
+      "totalLines": 277,
+      "hasStructuralAnalysis": true
+    },
+    "src/sandbox.rs": {
+      "filePath": "src/sandbox.rs",
+      "contentHash": "6e951584c6c81be379047adff52679ef1d18f659ee1d7da9951f268df4808c07",
+      "functions": [
+        {
+          "name": "create",
+          "params": [
+            "task"
+          ],
+          "returnType": "Result<Workspace, String>",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "inject_claude_md",
+          "params": [
+            "workspace",
+            "variant_contents"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "collect_patch",
+          "params": [
+            "workspace"
+          ],
+          "returnType": "Result<String, String>",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "git_diff_head",
+          "params": [
+            "repo"
+          ],
+          "returnType": "Result<String, String>",
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "git_checked",
+          "params": [
+            "args",
+            "cwd",
+            "label"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "git_output",
+          "params": [
+            "args",
+            "cwd"
+          ],
+          "returnType": "Result<Output, String>",
+          "exported": false,
+          "lineCount": 11
+        }
+      ],
+      "classes": [
+        {
+          "name": "Workspace",
+          "methods": [],
+          "properties": [
+            "_temp_dir",
+            "path"
+          ],
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "imports": [
+        {
+          "source": "std::ffi",
+          "specifiers": [
+            "OsStr",
+            "OsString"
+          ]
+        },
+        {
+          "source": "std::path",
+          "specifiers": [
+            "Path",
+            "PathBuf"
+          ]
+        },
+        {
+          "source": "std::process",
+          "specifiers": [
+            "Command",
+            "Output"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "TempDir"
+          ]
+        },
+        {
+          "source": "crate::swebench",
+          "specifiers": [
+            "self",
+            "TaskInstance"
+          ]
+        }
+      ],
+      "exports": [
+        "Workspace",
+        "create",
+        "inject_claude_md",
+        "collect_patch"
+      ],
+      "totalLines": 174,
+      "hasStructuralAnalysis": true
+    },
+    "src/swebench.rs": {
+      "filePath": "src/swebench.rs",
+      "contentHash": "1a30b7c4d923f045d9c4041c23a43ea1a5a00309e616bd5020c9fe6681895e11",
+      "functions": [
+        {
+          "name": "load_bundled_smoke_set",
+          "params": [],
+          "returnType": "Result<Vec<TaskInstance>, String>",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "load_task_instances",
+          "params": [
+            "path"
+          ],
+          "returnType": "Result<Vec<TaskInstance>, String>",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "load_task_instances_from_str",
+          "params": [
+            "contents"
+          ],
+          "returnType": "Result<Vec<TaskInstance>, String>",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "load_task_instances_jsonl",
+          "params": [
+            "path"
+          ],
+          "returnType": "Result<Vec<TaskInstance>, String>",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "prediction_to_json_line",
+          "params": [
+            "prediction"
+          ],
+          "returnType": "Result<String, String>",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "validate_repo_slug",
+          "params": [
+            "repo"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "validate_base_commit",
+          "params": [
+            "commit"
+          ],
+          "returnType": "Result<(), String>",
+          "exported": true,
+          "lineCount": 11
+        }
+      ],
+      "classes": [
+        {
+          "name": "TaskInstance",
+          "methods": [],
+          "properties": [
+            "instance_id",
+            "repo",
+            "base_commit",
+            "problem_statement",
+            "hints_text",
+            "version"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "Prediction",
+          "methods": [],
+          "properties": [
+            "instance_id",
+            "model_patch",
+            "model_name_or_path"
+          ],
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "imports": [
+        {
+          "source": "std::io",
+          "specifiers": [
+            "BufRead",
+            "BufReader"
+          ]
+        },
+        {
+          "source": "std::path",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "serde",
+          "specifiers": [
+            "Deserialize",
+            "Serialize"
+          ]
+        }
+      ],
+      "exports": [
+        "TaskInstance",
+        "Prediction",
+        "load_bundled_smoke_set",
+        "load_task_instances",
+        "load_task_instances_from_str",
+        "load_task_instances_jsonl",
+        "prediction_to_json_line",
+        "validate_repo_slug",
+        "validate_base_commit"
+      ],
+      "totalLines": 157,
+      "hasStructuralAnalysis": true
+    },
+    "Cargo.toml": {
+      "filePath": "Cargo.toml",
+      "contentHash": "baf9314bf2d086a3597c148884740582fa5378acf71c003be7075e4e67ebd9da",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 35,
+      "hasStructuralAnalysis": true
+    },
+    "Cargo.lock": {
+      "filePath": "Cargo.lock",
+      "contentHash": "7ddb4e2f90e75ccf95b1bc9089550c48607bff8dd56823feafae1ea98cd69029",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 543,
+      "hasStructuralAnalysis": false
+    },
+    "data/swebench_lite_v1_subset.jsonl": {
+      "filePath": "data/swebench_lite_v1_subset.jsonl",
+      "contentHash": "e4a05049d04e380fbff8f10c9f1be365134445e1d89f59f51a18b854efde707a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 6,
+      "hasStructuralAnalysis": false
+    },
+    "scripts/e2e_smoke.sh": {
+      "filePath": "scripts/e2e_smoke.sh",
+      "contentHash": "df2f3fa7a85b212748abb4d5606d1763b2b01084f04d815faf88cea8ca06f514",
+      "functions": [
+        {
+          "name": "stage",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 75,
+      "hasStructuralAnalysis": true
+    },
+    ".github/workflows/ci.yml": {
+      "filePath": ".github/workflows/ci.yml",
+      "contentHash": "a1a2d95dfed8e1a835f689d6dd14b368f594a5fb5a5fe1ee2e7773e50f57e650",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 18,
+      "hasStructuralAnalysis": true
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "31f32e2106cfac529e1412f9a6741cdee595e26d880c9cb79b166a8592a972da",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 236,
+      "hasStructuralAnalysis": true
+    },
+    "PLAN.md": {
+      "filePath": "PLAN.md",
+      "contentHash": "c951c05d1344045e0b6158723b6721ffc601d11a30e79d6f036d1ad05c212bf3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 602,
+      "hasStructuralAnalysis": true
+    },
+    "AGENTS.md": {
+      "filePath": "AGENTS.md",
+      "contentHash": "3004a94a12e307b41b6fa39452f7158f0cddbe0f5506f8defb6c3e998629d38c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 52,
+      "hasStructuralAnalysis": true
+    },
+    "AGENTS.local.md": {
+      "filePath": "AGENTS.local.md",
+      "contentHash": "cf7068535012fdda69ae4426fda47737d20a186b30c0372afeecf8ac65459788",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 3,
+      "hasStructuralAnalysis": true
+    },
+    "CLAUDE.md": {
+      "filePath": "CLAUDE.md",
+      "contentHash": "215af719903af13e566835ffdd7d4adc69de8f1cee879ba32e501b24a5aca0c3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 2,
+      "hasStructuralAnalysis": true
+    },
+    "CONTRIBUTING.md": {
+      "filePath": "CONTRIBUTING.md",
+      "contentHash": "51c703331f79a68da7a15db40fe07212a88598ff3e932f669ffa33f6d1ba8672",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 20,
+      "hasStructuralAnalysis": true
+    },
+    "LICENSE": {
+      "filePath": "LICENSE",
+      "contentHash": "0fe8b87daeac804907cb8ec4c32a57b93e642babb73c770b8f42de414c40a8ee",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 22,
+      "hasStructuralAnalysis": false
+    },
+    ".gitignore": {
+      "filePath": ".gitignore",
+      "contentHash": "7a8de4de009a13719c110f93abed77f72caab6209b5f3bd700144fd21e0a60ee",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 10,
+      "hasStructuralAnalysis": false
+    },
+    ".claude/CLAUDE.md": {
+      "filePath": ".claude/CLAUDE.md",
+      "contentHash": "89e286d5d228e41f1fce2673d8955d6253352dad54d5c8a5d246090dee9f9177",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 68,
+      "hasStructuralAnalysis": true
+    },
+    ".claude/settings.local.json": {
+      "filePath": ".claude/settings.local.json",
+      "contentHash": "0041bcf59906d7a0a57f97ed5e0277660eca783ceab1ab725f3223e5452cca8b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 10,
+      "hasStructuralAnalysis": true
+    },
+    "variants/a.md": {
+      "filePath": "variants/a.md",
+      "contentHash": "7118c704ce44246bee7aaac1b6877b76c8f070ca46da805e03210561c63ed145",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7,
+      "hasStructuralAnalysis": true
+    },
+    "variants/b.md": {
+      "filePath": "variants/b.md",
+      "contentHash": "971029f991286215a6e237fb8bc49e3d547975c97dd10c8f9e82d083064c404d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 3,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/config.json": {
+      "filePath": ".planning/config.json",
+      "contentHash": "1ca0b1f745b13284ef4057e49879c56b1143a741d202ca1eb7e7d35224d8301d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 67,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/PROJECT.md": {
+      "filePath": ".planning/PROJECT.md",
+      "contentHash": "016e287aed4c9d4ace44560fcd667202331cbe5454c694ee7b9a58198222f17a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 72,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/REQUIREMENTS.md": {
+      "filePath": ".planning/REQUIREMENTS.md",
+      "contentHash": "1dc7d6ac0212cd2d3e2c782d68b8404dcdb4689564142a5fa95b523095bc9097",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 58,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/ROADMAP.md": {
+      "filePath": ".planning/ROADMAP.md",
+      "contentHash": "a4ac8ba3127148b46f8f1a34e2cfabcd4220acbab11c8a555afb09f69dcddc09",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 43,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/STATE.md": {
+      "filePath": ".planning/STATE.md",
+      "contentHash": "f8f79a81708481f280c529d96b201986b762b6b6efe07c9e208018a219cb1542",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 88,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/phases/01-parallel-execution/01-01-PLAN.md": {
+      "filePath": ".planning/phases/01-parallel-execution/01-01-PLAN.md",
+      "contentHash": "7e443de8d66c4ddafc7056b1870474928f51a19c7034d5d459eb295cc1853f58",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 280,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/phases/01-parallel-execution/01-01-SUMMARY.md": {
+      "filePath": ".planning/phases/01-parallel-execution/01-01-SUMMARY.md",
+      "contentHash": "934b8eceac72b5b407da28da53dc2d001801c3f5b6abb59d833d93131d490ecf",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 46,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/phases/01-parallel-execution/01-REVIEWS.md": {
+      "filePath": ".planning/phases/01-parallel-execution/01-REVIEWS.md",
+      "contentHash": "446c40fbc36fa450b3bf5ae5b82c7516c5e57569c41c864712f344a096aa1fd4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 84,
+      "hasStructuralAnalysis": true
+    },
+    ".planning/phases/01-parallel-execution/01-VERIFICATION.md": {
+      "filePath": ".planning/phases/01-parallel-execution/01-VERIFICATION.md",
+      "contentHash": "c7ce8fc553f7122600490f4de427a327c64148b4c68ca3c83e540387878808eb",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 119,
+      "hasStructuralAnalysis": true
+    }
+  }
+}

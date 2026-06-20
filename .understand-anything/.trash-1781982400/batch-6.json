@@ -1,0 +1,117 @@
+{
+  "batchFiles": [
+    { "path": ".claude/CLAUDE.md", "language": "Markdown", "sizeLines": 0, "fileCategory": "config" },
+    { "path": ".claude/settings.local.json", "language": "JSON", "sizeLines": 0, "fileCategory": "config" },
+    { "path": "data/swebench_lite_v1_subset.jsonl", "language": "JSONL", "sizeLines": 0, "fileCategory": "data" },
+    { "path": "scripts/e2e_smoke.sh", "language": "Bash", "sizeLines": 0, "fileCategory": "script" },
+    { "path": "variants/a.md", "language": "Markdown", "sizeLines": 0, "fileCategory": "data" },
+    { "path": "variants/b.md", "language": "Markdown", "sizeLines": 0, "fileCategory": "data" }
+  ],
+  "nodes": [
+    {
+      "id": "document:.claude/CLAUDE.md",
+      "type": "document",
+      "name": "CLAUDE.md (Claude Code config)",
+      "filePath": ".claude/CLAUDE.md",
+      "summary": "GSD-managed Claude Code agent instructions for the clawmark project. Defines the project description (A/B benchmarking CLAUDE.md variants against SWE-bench Lite), tech stack, conventions, architecture notes, workflow enforcement rules, and developer profile placeholder. Auto-generated sections are managed by GSD tooling and must not be edited manually.",
+      "tags": ["agent-config", "gsd", "claude-code", "workflow", "documentation", "project-context"],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:.claude/settings.local.json",
+      "type": "config",
+      "name": "settings.local.json",
+      "filePath": ".claude/settings.local.json",
+      "summary": "Local Claude Code permissions configuration that explicitly allows WebSearch, a scoped Bash command (rtk read *), and the gsd-execute-phase skill. Restricts the tool surface available to Claude Code agents running in this project.",
+      "tags": ["claude-code", "permissions", "config", "security", "tooling"],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:data/swebench_lite_v1_subset.jsonl",
+      "type": "file",
+      "name": "swebench_lite_v1_subset.jsonl",
+      "filePath": "data/swebench_lite_v1_subset.jsonl",
+      "summary": "Bundled dataset of exactly 5 SWE-bench Lite task instances comprising the fixed astropy smoke set: astropy__astropy-12907, 14182, 14365, 14995, and 6938. Each line is a JSON object with instance_id, repo, base_commit, and problem_statement. Loaded by the runner at runtime as the sole benchmark input for A/B runs.",
+      "tags": ["dataset", "swebench", "benchmark", "astropy", "jsonl", "smoke-set", "fixtures"],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:scripts/e2e_smoke.sh",
+      "type": "file",
+      "name": "e2e_smoke.sh",
+      "filePath": "scripts/e2e_smoke.sh",
+      "summary": "Bash end-to-end smoke test script that replicates clawmark's live execution path for a single task without the full SWE-bench Docker harness. Clones the target repo, checks out the base commit, injects a CLAUDE.md variant, invokes the claude CLI with the same argv as clawmark, captures git diff HEAD, and asserts a non-empty patch was produced. Accepts model, timeout, and variant path as positional arguments.",
+      "tags": ["smoke-test", "e2e", "bash", "testing", "claude-cli", "git", "validation"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:variants/a.md",
+      "type": "document",
+      "name": "variants/a.md (Variant A)",
+      "filePath": "variants/a.md",
+      "summary": "Variant A CLAUDE.md instructions. Directs Claude to apply the smallest possible code change to fix the described issue, explicitly prohibiting test runs, refactoring, feature additions, and reformatting. Designed to test whether a minimal-change strategy yields better SWE-bench resolution rates.",
+      "tags": ["variant", "claude-md", "benchmark", "minimal-fix", "a-b-test", "prompt-engineering"],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:variants/b.md",
+      "type": "document",
+      "name": "variants/b.md (Variant B)",
+      "filePath": "variants/b.md",
+      "summary": "Variant B CLAUDE.md instructions. Directs Claude to solve the issue directly with small patches and verify behavior with tests. Represents a test-driven strategy intended to be compared against Variant A on the same SWE-bench Lite smoke tasks.",
+      "tags": ["variant", "claude-md", "benchmark", "test-driven", "a-b-test", "prompt-engineering"],
+      "complexity": "simple"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:scripts/e2e_smoke.sh",
+      "target": "file:data/swebench_lite_v1_subset.jsonl",
+      "type": "reads_from",
+      "weight": 0.5,
+      "description": "Smoke script reads the first instance from the JSONL dataset to obtain repo, base_commit, and problem_statement."
+    },
+    {
+      "source": "file:scripts/e2e_smoke.sh",
+      "target": "document:variants/a.md",
+      "type": "depends_on",
+      "weight": 0.6,
+      "description": "Smoke script defaults VARIANT to variants/a.md; injects the selected variant as CLAUDE.md into the cloned repo before invoking claude."
+    },
+    {
+      "source": "file:scripts/e2e_smoke.sh",
+      "target": "document:variants/b.md",
+      "type": "related",
+      "weight": 0.5,
+      "description": "Smoke script accepts any variant path as its third positional argument, including variants/b.md."
+    },
+    {
+      "source": "document:variants/a.md",
+      "target": "document:variants/b.md",
+      "type": "related",
+      "weight": 0.5,
+      "description": "Both files are competing CLAUDE.md variant prompts being A/B tested against the same SWE-bench Lite smoke tasks."
+    },
+    {
+      "source": "document:.claude/CLAUDE.md",
+      "target": "config:.claude/settings.local.json",
+      "type": "related",
+      "weight": 0.5,
+      "description": "Both are Claude Code local configuration files co-located under .claude/ that together define the agent context and allowed tool permissions for this project."
+    },
+    {
+      "source": "document:.claude/CLAUDE.md",
+      "target": "document:variants/a.md",
+      "type": "related",
+      "weight": 0.5,
+      "description": "The project CLAUDE.md describes the purpose of clawmark as an A/B benchmark of CLAUDE.md variants; variants/a.md is one of the two files being compared."
+    },
+    {
+      "source": "document:.claude/CLAUDE.md",
+      "target": "document:variants/b.md",
+      "type": "related",
+      "weight": 0.5,
+      "description": "The project CLAUDE.md describes the purpose of clawmark as an A/B benchmark of CLAUDE.md variants; variants/b.md is the other file being compared."
+    }
+  ]
+}

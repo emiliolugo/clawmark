@@ -18,9 +18,9 @@ The full phased implementation plan (architecture, types, security rules, milest
 
 **No scope creep.** Implement exactly what PLAN.md specifies for the current phase — nothing more. Do not add flags, config fields, abstractions, or error variants that aren't required by the phase's deliverables. If something seems like a natural extension, note it in a comment or TODO, but do not implement it.
 
-**Protect the minimal v1.** v1 is only `doctor`, `run --a <path> --b <path> --model <model> --timeout-secs <seconds> --out <dir>`, and `report --out <dir>` for local SWE-bench Lite A/B testing. Do not add N-variant matrices, repeated trials, pass@k, McNemar/Wilson statistics, resume/retry systems, plugin APIs, cloud/remote execution, progress UI, release automation, or whole-run cost accounting unless PLAN.md is intentionally expanded first.
+**Protect the minimal v1.** v1 is only `doctor`, `run --a <path> --b <path> --model <model> --timeout-secs <seconds> --out <dir> [--parallel N]`, and `report --out <dir> [--show-patches]` for local SWE-bench Lite A/B testing. Do not add N-variant matrices, repeated trials, pass@k, McNemar/Wilson statistics, resume/retry systems, plugin APIs, cloud/remote execution, progress UI, release automation, or whole-run cost accounting unless PLAN.md is intentionally expanded first.
 
-**Prefer direct A/B concepts.** Use fixed variant slots `A` and `B`, serial execution, simple output files (`a.jsonl`, `b.jsonl`, `a.json`, `b.json`), and win/loss/tie report metrics. Avoid generic benchmark abstractions until there is a second benchmark target.
+**Prefer direct A/B concepts.** Use fixed variant slots `A` and `B`, simple output files (`a.jsonl`, `b.jsonl`, `a.json`, `b.json`), and win/loss/tie report metrics. Avoid generic benchmark abstractions until there is a second benchmark target.
 
 **Ship the smoke runner first.** If only one thing can work, it must be the reliable bundled 5-task A/B smoke runner. Do not add partial support for all 300 SWE-bench Lite tasks in v1.
 
@@ -28,7 +28,7 @@ The full phased implementation plan (architecture, types, security rules, milest
 
 **CLI-only v1.** Require run parameters on the CLI. Do not add `clawmark.toml`, config-file parsing, or the `toml` crate.
 
-**Prefer fewer dependencies over richer internals.** Use blocking `std::process::Command`, plain error messages, and empty patches for unresolved outputs. Do not add `tokio`, `anyhow`, `thiserror`, or model-output diff extraction in v1.
+**Prefer fewer dependencies over richer internals.** Use plain error messages and empty patches for unresolved outputs. Do not add `anyhow`, `thiserror`, or model-output diff extraction in v1. `tokio` is used for concurrent Claude invocations when `--parallel > 1`; harness invocations remain serial (`std::process::Command`).
 
 **Keep output semantics simple.** `run --out <dir>` must fail if `<dir>` already exists; do not append, clear, resume, or partially reuse previous output. `report --out <dir>` only reads existing v1 output.
 
@@ -40,11 +40,11 @@ The full phased implementation plan (architecture, types, security rules, milest
 - Benchmark: SWE-bench Lite only (v1)
 - Task set: bundled 5-task smoke subset only, fixed to the IDs listed in PLAN.md
 - Variants: exactly two local files, addressed as A and B
-- Execution: serial, one trial per variant/task
-- Reporting: resolved counts plus A wins, B wins, ties, and both-failed counts
+- Execution: up to `--parallel N` Claude invocations concurrently within each variant pass (default N=1, sequential); harness always runs serially, one invocation per variant
+- Reporting: resolved counts plus A wins, B wins, ties, and both-failed counts; `--show-patches` displays each task's patch truncated to 20 lines; failure summary printed automatically when any task is unresolved
 - Claude invocation: `claude -p --output-format json --dangerously-skip-permissions --model <model> --add-dir <workspace> -- <problem_statement>` (note: `--bare` is intentionally NOT used; see the comment in `src/runner.rs`)
 - Docker: required (SWE-bench harness uses per-instance containers)
-- No shell strings in subprocesses — always `Command` argv arrays
+- No shell strings in subprocesses — always `Command` argv arrays (harness) or tokio `Command` (Claude, when parallel)
 - Empty `git diff HEAD` means unresolved; write an empty patch
 - Failure records need only `error: Option<String>`, not typed categories
 - Variant paths must canonicalize inside the current working directory and A/B must be different files

@@ -1,0 +1,125 @@
+{
+  "batchFiles": [
+    {
+      "path": ".planning/PROJECT.md",
+      "language": "Markdown",
+      "sizeLines": 0,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".planning/REQUIREMENTS.md",
+      "language": "Markdown",
+      "sizeLines": 0,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".planning/ROADMAP.md",
+      "language": "Markdown",
+      "sizeLines": 0,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".planning/STATE.md",
+      "language": "Markdown",
+      "sizeLines": 0,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".planning/config.json",
+      "language": "JSON",
+      "sizeLines": 0,
+      "fileCategory": "config"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "document:.planning/PROJECT.md",
+      "type": "document",
+      "name": "PROJECT.md",
+      "filePath": ".planning/PROJECT.md",
+      "summary": "GSD planning framework project definition document for clawmark. Captures the high-level project identity, purpose, and scope for the A/B CLAUDE.md benchmarking CLI.",
+      "tags": ["planning", "gsd", "project-definition", "docs"],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:.planning/REQUIREMENTS.md",
+      "type": "document",
+      "name": "REQUIREMENTS.md",
+      "filePath": ".planning/REQUIREMENTS.md",
+      "summary": "GSD planning framework requirements document for clawmark. Defines functional and non-functional requirements for the local Rust CLI that A/B tests CLAUDE.md files against SWE-bench Lite.",
+      "tags": ["planning", "gsd", "requirements", "docs"],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:.planning/ROADMAP.md",
+      "type": "document",
+      "name": "ROADMAP.md",
+      "filePath": ".planning/ROADMAP.md",
+      "summary": "GSD planning framework roadmap document for clawmark. Outlines phased milestones and delivery timeline for the smoke runner, report command, and full SWE-bench Lite integration.",
+      "tags": ["planning", "gsd", "roadmap", "milestones", "docs"],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:.planning/STATE.md",
+      "type": "document",
+      "name": "STATE.md",
+      "filePath": ".planning/STATE.md",
+      "summary": "GSD planning framework live state tracker for clawmark. Records current phase, active tasks, blockers, and progress checkpoints used by the GSD workflow system.",
+      "tags": ["planning", "gsd", "state", "progress", "docs"],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:.planning/config.json",
+      "type": "config",
+      "name": "config.json",
+      "filePath": ".planning/config.json",
+      "summary": "GSD planning framework configuration file for clawmark. Stores planning system settings such as project name, active milestone, and workflow preferences.",
+      "tags": ["planning", "gsd", "config", "json"],
+      "complexity": "simple"
+    }
+  ],
+  "edges": [
+    {
+      "source": "config:.planning/config.json",
+      "target": "document:.planning/PROJECT.md",
+      "type": "configures",
+      "weight": 0.6,
+      "description": "Planning config governs the project definition document"
+    },
+    {
+      "source": "config:.planning/config.json",
+      "target": "document:.planning/STATE.md",
+      "type": "configures",
+      "weight": 0.6,
+      "description": "Planning config governs current workflow state"
+    },
+    {
+      "source": "document:.planning/PROJECT.md",
+      "target": "document:.planning/REQUIREMENTS.md",
+      "type": "related",
+      "weight": 0.5,
+      "description": "Project definition drives requirements specification"
+    },
+    {
+      "source": "document:.planning/PROJECT.md",
+      "target": "document:.planning/ROADMAP.md",
+      "type": "related",
+      "weight": 0.5,
+      "description": "Project definition drives roadmap planning"
+    },
+    {
+      "source": "document:.planning/REQUIREMENTS.md",
+      "target": "document:.planning/ROADMAP.md",
+      "type": "related",
+      "weight": 0.5,
+      "description": "Requirements inform roadmap phase breakdown"
+    },
+    {
+      "source": "document:.planning/ROADMAP.md",
+      "target": "document:.planning/STATE.md",
+      "type": "related",
+      "weight": 0.5,
+      "description": "Roadmap milestones are tracked in current state"
+    }
+  ]
+}

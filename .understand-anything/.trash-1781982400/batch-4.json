@@ -1,0 +1,100 @@
+{
+  "batchFiles": [
+    {
+      "path": ".planning/phases/01-parallel-execution/01-01-PLAN.md",
+      "language": "Markdown",
+      "sizeLines": 0,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".planning/phases/01-parallel-execution/01-01-SUMMARY.md",
+      "language": "Markdown",
+      "sizeLines": 0,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".planning/phases/01-parallel-execution/01-REVIEWS.md",
+      "language": "Markdown",
+      "sizeLines": 0,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".planning/phases/01-parallel-execution/01-VERIFICATION.md",
+      "language": "Markdown",
+      "sizeLines": 0,
+      "fileCategory": "docs"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "document:.planning/phases/01-parallel-execution/01-01-PLAN.md",
+      "type": "document",
+      "name": "01-01-PLAN.md",
+      "filePath": ".planning/phases/01-parallel-execution/01-01-PLAN.md",
+      "summary": "GSD execution plan for Phase 01 (parallel execution): adds --parallel N to clawmark run using tokio Semaphore-based task fan-out, Mutex-serialized JSONL writes, and an async run_ab entry point. Defines two implementation tasks, a threat model (T-01-01 DoS, T-01-02 write tampering, T-01-SC supply chain), must-have truths covering auth-failure semantics and ordering, and seven review findings (F-01–F-07) with their dispositions.",
+      "tags": ["planning", "execution-plan", "parallel", "concurrency", "tokio", "cli", "swe-bench", "gsd"],
+      "complexity": "moderate",
+      "language": "Markdown"
+    },
+    {
+      "id": "document:.planning/phases/01-parallel-execution/01-01-SUMMARY.md",
+      "type": "document",
+      "name": "01-01-SUMMARY.md",
+      "filePath": ".planning/phases/01-parallel-execution/01-01-SUMMARY.md",
+      "summary": "Completion summary for GSD plan 01-01: both tasks finished (tokio dependency + --parallel CLI flag; semaphore-based concurrent task execution in runner). Documents key changes to Cargo.toml, src/cli.rs, src/runner.rs, and src/main.rs. Confirms 37 tests pass, clean release build, and --parallel visible in help output.",
+      "tags": ["planning", "summary", "complete", "parallel", "tokio", "gsd"],
+      "complexity": "simple",
+      "language": "Markdown"
+    },
+    {
+      "id": "document:.planning/phases/01-parallel-execution/01-REVIEWS.md",
+      "type": "document",
+      "name": "01-REVIEWS.md",
+      "filePath": ".planning/phases/01-parallel-execution/01-REVIEWS.md",
+      "summary": "Cross-AI code review (Cursor) of the Phase 01 parallel-execution plan. Rates overall risk MEDIUM. Highlights two HIGH findings (auth-failure abort semantics conflict with 'exactly one record per task'; fan-out spawns all tasks upfront so queued tasks cannot be cheaply cancelled), two MEDIUM findings (nondeterministic output ordering; parallel==1 identity weaker than claimed), and two LOW findings (tokio time feature inconsistency; weak DoS argument). Provides concrete suggestions for each.",
+      "tags": ["planning", "review", "risk-assessment", "concurrency", "auth-failure", "gsd"],
+      "complexity": "moderate",
+      "language": "Markdown"
+    },
+    {
+      "id": "document:.planning/phases/01-parallel-execution/01-VERIFICATION.md",
+      "type": "document",
+      "name": "01-VERIFICATION.md",
+      "filePath": ".planning/phases/01-parallel-execution/01-VERIFICATION.md",
+      "summary": "Verification report for Phase 01 parallel execution (verified 2026-06-19, status: passed). 3/3 roadmap success criteria verified; 7/7 must-have truths checked (5 fully verified, 2 structurally present but runtime-behavior unverified: concurrent write serialization and queued-task behavior after auth failure). All required artifacts confirmed in source. CONC-01 fully satisfied.",
+      "tags": ["planning", "verification", "passed", "parallel", "tokio", "swe-bench", "gsd"],
+      "complexity": "moderate",
+      "language": "Markdown"
+    }
+  ],
+  "edges": [
+    {
+      "source": "document:.planning/phases/01-parallel-execution/01-REVIEWS.md",
+      "target": "document:.planning/phases/01-parallel-execution/01-01-PLAN.md",
+      "type": "documents",
+      "weight": 0.5,
+      "label": "reviews plan"
+    },
+    {
+      "source": "document:.planning/phases/01-parallel-execution/01-01-SUMMARY.md",
+      "target": "document:.planning/phases/01-parallel-execution/01-01-PLAN.md",
+      "type": "related",
+      "weight": 0.5,
+      "label": "summarizes completed plan"
+    },
+    {
+      "source": "document:.planning/phases/01-parallel-execution/01-VERIFICATION.md",
+      "target": "document:.planning/phases/01-parallel-execution/01-01-PLAN.md",
+      "type": "related",
+      "weight": 0.5,
+      "label": "verifies plan requirements and artifacts"
+    },
+    {
+      "source": "document:.planning/phases/01-parallel-execution/01-VERIFICATION.md",
+      "target": "document:.planning/phases/01-parallel-execution/01-01-SUMMARY.md",
+      "type": "related",
+      "weight": 0.5,
+      "label": "corroborates completion claims in summary"
+    }
+  ]
+}

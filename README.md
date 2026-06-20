@@ -64,10 +64,28 @@ This performs:
 
 `run` creates a fresh output directory. It fails if `--out` already exists, so use a new directory for each run.
 
+To run up to N Claude invocations concurrently within each variant pass, add `--parallel N`:
+
+```sh
+cargo run -- run \
+  --a variants/a.md \
+  --b variants/b.md \
+  --model sonnet \
+  --timeout-secs 300 \
+  --parallel 5 \
+  --out out
+```
+
 Print the report from existing output:
 
 ```sh
 cargo run -- report --out out
+```
+
+To also display each task's model patch (truncated to 20 lines):
+
+```sh
+cargo run -- report --out out --show-patches
 ```
 
 After building a release binary, the same commands can be run as:
@@ -76,7 +94,7 @@ After building a release binary, the same commands can be run as:
 cargo build --release
 ./target/release/clawmark doctor
 ./target/release/clawmark run --a variants/a.md --b variants/b.md --model sonnet --timeout-secs 300 --out out
-./target/release/clawmark report --out out
+./target/release/clawmark report --out out --show-patches
 ```
 
 ## Runtime And Budget Warnings
@@ -124,6 +142,8 @@ claude -p --output-format json --dangerously-skip-permissions --model <model> --
 
 After all predictions are written for a variant, `clawmark` invokes the SWE-bench harness once for A and once for B. The report treats the harness `resolved_ids` arrays as the source of truth.
 
+When any (variant, task) pair fails to resolve, `clawmark run` prints a failure summary at the end of the run listing each unresolved instance and the error message (if any). When all tasks resolve, no summary is printed.
+
 ## CLI Reference
 
 ```sh
@@ -133,16 +153,16 @@ clawmark doctor
 Checks Docker, Claude CLI, Claude authentication, Python, `swebench`, the SWE-bench harness CLI, git, Docker Hub registry reachability, and whether the SWE-bench Docker image is already present.
 
 ```sh
-clawmark run --a <path> --b <path> --model <model> --timeout-secs <seconds> --out <dir>
+clawmark run --a <path> --b <path> --model <model> --timeout-secs <seconds> --out <dir> [--parallel N]
 ```
 
-Runs the fixed five-task A/B benchmark. `--timeout-secs` must be between `1` and `86400`; it applies to each Claude invocation and is also passed to the SWE-bench harness.
+Runs the fixed five-task A/B benchmark. `--timeout-secs` must be between `1` and `86400`; it applies to each Claude invocation and is also passed to the SWE-bench harness. `--parallel N` (default: `1`) allows up to N Claude invocations to run concurrently within each variant pass. The SWE-bench harness is always invoked serially, once per variant.
 
 ```sh
-clawmark report --out <dir>
+clawmark report --out <dir> [--show-patches]
 ```
 
-Reads existing harness output, prints resolved counts, A wins, B wins, both-resolved ties, and both-failed ties, then writes `report.json`.
+Reads existing harness output, prints resolved counts, A wins, B wins, both-resolved ties, and both-failed ties, then writes `report.json`. With `--show-patches`, also prints each task's model patch truncated to 20 lines.
 
 ## Input Rules
 

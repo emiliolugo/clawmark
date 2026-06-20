@@ -1,0 +1,337 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "louvain",
+  "totalFiles": 34,
+  "totalBatches": 6,
+  "exportsByPath": {},
+  "batches": [
+    {
+      "batchIndex": 1,
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "language": "YAML",
+          "category": "ci",
+          "size_bytes": 317,
+          "description": "GitHub Actions CI pipeline (fmt, clippy, test)"
+        }
+      ],
+      "batchImportData": {
+        ".github/workflows/ci.yml": []
+      },
+      "neighborMap": {}
+    },
+    {
+      "batchIndex": 2,
+      "files": [
+        {
+          "path": ".gitignore",
+          "language": "Text",
+          "category": "config",
+          "size_bytes": 84,
+          "description": "Git ignore rules"
+        },
+        {
+          "path": "AGENTS.local.md",
+          "language": "Markdown",
+          "category": "docs",
+          "size_bytes": 260,
+          "description": "Local agent overrides"
+        },
+        {
+          "path": "AGENTS.md",
+          "language": "Markdown",
+          "category": "docs",
+          "size_bytes": 4273,
+          "description": "AI agent context and coding guidelines"
+        },
+        {
+          "path": "CLAUDE.md",
+          "language": "Markdown",
+          "category": "docs",
+          "size_bytes": 25,
+          "description": "Entry point linking to AGENTS.md"
+        },
+        {
+          "path": "CONTRIBUTING.md",
+          "language": "Markdown",
+          "category": "docs",
+          "size_bytes": 367,
+          "description": "Contribution guidelines"
+        },
+        {
+          "path": "Cargo.lock",
+          "language": "TOML",
+          "category": "config",
+          "size_bytes": 14580,
+          "description": "Locked dependency versions"
+        },
+        {
+          "path": "Cargo.toml",
+          "language": "TOML",
+          "category": "config",
+          "size_bytes": 848,
+          "description": "Cargo package manifest and dependency declarations"
+        },
+        {
+          "path": "LICENSE",
+          "language": "Text",
+          "category": "legal",
+          "size_bytes": 1068,
+          "description": "MIT license"
+        },
+        {
+          "path": "PLAN.md",
+          "language": "Markdown",
+          "category": "docs",
+          "size_bytes": 27198,
+          "description": "Maintainer-local implementation plan (gitignored in public clones)"
+        },
+        {
+          "path": "README.md",
+          "language": "Markdown",
+          "category": "docs",
+          "size_bytes": 9030,
+          "description": "Project overview, prerequisites, quickstart"
+        }
+      ],
+      "batchImportData": {
+        ".gitignore": [],
+        "AGENTS.local.md": [],
+        "AGENTS.md": [],
+        "CLAUDE.md": [],
+        "CONTRIBUTING.md": [],
+        "Cargo.lock": [],
+        "Cargo.toml": [],
+        "LICENSE": [],
+        "PLAN.md": [],
+        "README.md": []
+      },
+      "neighborMap": {}
+    },
+    {
+      "batchIndex": 3,
+      "files": [
+        {
+          "path": ".planning/PROJECT.md",
+          "language": "Markdown",
+          "category": "planning",
+          "size_bytes": 3008,
+          "description": "Project-level planning document"
+        },
+        {
+          "path": ".planning/REQUIREMENTS.md",
+          "language": "Markdown",
+          "category": "planning",
+          "size_bytes": 1901,
+          "description": "Project requirements"
+        },
+        {
+          "path": ".planning/ROADMAP.md",
+          "language": "Markdown",
+          "category": "planning",
+          "size_bytes": 2030,
+          "description": "Development roadmap"
+        },
+        {
+          "path": ".planning/STATE.md",
+          "language": "Markdown",
+          "category": "planning",
+          "size_bytes": 1761,
+          "description": "Current planning state and active phase"
+        },
+        {
+          "path": ".planning/config.json",
+          "language": "JSON",
+          "category": "planning",
+          "size_bytes": 1701,
+          "description": "GSD planning workflow config"
+        }
+      ],
+      "batchImportData": {
+        ".planning/PROJECT.md": [],
+        ".planning/REQUIREMENTS.md": [],
+        ".planning/ROADMAP.md": [],
+        ".planning/STATE.md": [],
+        ".planning/config.json": []
+      },
+      "neighborMap": {}
+    },
+    {
+      "batchIndex": 4,
+      "files": [
+        {
+          "path": ".planning/phases/01-parallel-execution/01-01-PLAN.md",
+          "language": "Markdown",
+          "category": "planning",
+          "size_bytes": 18685,
+          "description": "Phase 1 execution plan"
+        },
+        {
+          "path": ".planning/phases/01-parallel-execution/01-01-SUMMARY.md",
+          "language": "Markdown",
+          "category": "planning",
+          "size_bytes": 1937,
+          "description": "Phase 1 summary"
+        },
+        {
+          "path": ".planning/phases/01-parallel-execution/01-REVIEWS.md",
+          "language": "Markdown",
+          "category": "planning",
+          "size_bytes": 6992,
+          "description": "Phase 1 code review notes"
+        },
+        {
+          "path": ".planning/phases/01-parallel-execution/01-VERIFICATION.md",
+          "language": "Markdown",
+          "category": "planning",
+          "size_bytes": 10401,
+          "description": "Phase 1 verification results"
+        }
+      ],
+      "batchImportData": {
+        ".planning/phases/01-parallel-execution/01-01-PLAN.md": [],
+        ".planning/phases/01-parallel-execution/01-01-SUMMARY.md": [],
+        ".planning/phases/01-parallel-execution/01-REVIEWS.md": [],
+        ".planning/phases/01-parallel-execution/01-VERIFICATION.md": []
+      },
+      "neighborMap": {}
+    },
+    {
+      "batchIndex": 5,
+      "files": [
+        {
+          "path": "src/cli.rs",
+          "language": "Rust",
+          "category": "source",
+          "size_bytes": 11762,
+          "lines": 383,
+          "description": "Clap CLI definitions for doctor, run, and report subcommands"
+        },
+        {
+          "path": "src/doctor.rs",
+          "language": "Rust",
+          "category": "source",
+          "size_bytes": 10157,
+          "lines": 325,
+          "description": "Prerequisite checker (claude, docker, python, git, swebench)"
+        },
+        {
+          "path": "src/main.rs",
+          "language": "Rust",
+          "category": "source",
+          "size_bytes": 2213,
+          "lines": 71,
+          "description": "CLI entry point, subcommand dispatch"
+        },
+        {
+          "path": "src/report.rs",
+          "language": "Rust",
+          "category": "source",
+          "size_bytes": 6653,
+          "lines": 215,
+          "description": "Report generation from harness results (win/loss/tie/both-failed)"
+        },
+        {
+          "path": "src/results.rs",
+          "language": "Rust",
+          "category": "source",
+          "size_bytes": 9517,
+          "lines": 276,
+          "description": "Result record types and JSONL serialization"
+        },
+        {
+          "path": "src/runner.rs",
+          "language": "Rust",
+          "category": "source",
+          "size_bytes": 23803,
+          "lines": 717,
+          "description": "Core A/B benchmark runner — orchestrates Claude invocations and harness execution"
+        },
+        {
+          "path": "src/sandbox.rs",
+          "language": "Rust",
+          "category": "source",
+          "size_bytes": 5651,
+          "lines": 173,
+          "description": "Workspace sandbox setup for task execution"
+        },
+        {
+          "path": "src/swebench.rs",
+          "language": "Rust",
+          "category": "source",
+          "size_bytes": 5218,
+          "lines": 156,
+          "description": "SWE-bench task type definitions and JSONL deserialization"
+        }
+      ],
+      "batchImportData": {
+        "src/cli.rs": [],
+        "src/doctor.rs": [],
+        "src/main.rs": [],
+        "src/report.rs": [],
+        "src/results.rs": [],
+        "src/runner.rs": [],
+        "src/sandbox.rs": [],
+        "src/swebench.rs": []
+      },
+      "neighborMap": {}
+    },
+    {
+      "batchIndex": 6,
+      "files": [
+        {
+          "path": ".claude/CLAUDE.md",
+          "language": "Markdown",
+          "category": "config",
+          "size_bytes": 2198,
+          "description": "Claude Code tool-specific agent instructions"
+        },
+        {
+          "path": ".claude/settings.local.json",
+          "language": "JSON",
+          "category": "config",
+          "size_bytes": 126,
+          "description": "Local Claude Code settings"
+        },
+        {
+          "path": "data/swebench_lite_v1_subset.jsonl",
+          "language": "JSONL",
+          "category": "data",
+          "size_bytes": 16477,
+          "description": "Bundled 5-task SWE-bench Lite smoke subset (astropy tasks)"
+        },
+        {
+          "path": "scripts/e2e_smoke.sh",
+          "language": "Bash",
+          "category": "script",
+          "size_bytes": 2316,
+          "description": "End-to-end smoke test script"
+        },
+        {
+          "path": "variants/a.md",
+          "language": "Markdown",
+          "category": "data",
+          "size_bytes": 307,
+          "description": "Variant A CLAUDE.md file for A/B testing"
+        },
+        {
+          "path": "variants/b.md",
+          "language": "Markdown",
+          "category": "data",
+          "size_bytes": 79,
+          "description": "Variant B CLAUDE.md file for A/B testing"
+        }
+      ],
+      "batchImportData": {
+        ".claude/CLAUDE.md": [],
+        ".claude/settings.local.json": [],
+        "data/swebench_lite_v1_subset.jsonl": [],
+        "scripts/e2e_smoke.sh": [],
+        "variants/a.md": [],
+        "variants/b.md": []
+      },
+      "neighborMap": {}
+    }
+  ]
+}

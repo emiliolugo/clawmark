@@ -1,0 +1,17 @@
+{
+  "fixedSectionOk": true,
+  "nodesRecovered": 0,
+  "edgesRestored": 0,
+  "crossBatchEdgesAdded": 2,
+  "typesRemapped": 0,
+  "complexityRemapped": 0,
+  "notes": [
+    "Merge script output was clean: 68 nodes and 108 edges passed through with no ID normalization, no complexity remaps, and no dangling-edge drops.",
+    "Import map was empty — no cross-batch import recovery was possible from scan-result.json.",
+    "ORPHAN FIXED: pipeline:.github/workflows/ci.yml had no edges. Added configures edge to config:Cargo.toml (the CI pipeline drives cargo fmt/clippy/test commands from the manifest).",
+    "MISSING EDGE FIXED: file:src/swebench.rs embeds data/swebench_lite_v1_subset.jsonl at compile time via include_str!, but no reads_from edge existed. Added reads_from edge (weight 0.5) from swebench.rs to the JSONL data file.",
+    "OBSERVATION: Several file:src/* nodes (main.rs, cli.rs, doctor.rs, runner.rs, report.rs, results.rs, sandbox.rs, swebench.rs) are missing sizeLines and language fields. Not blocking — these fields are not required by schema.",
+    "OBSERVATION: Some .planning/* document nodes are missing language and sizeLines fields — expected for planning docs.",
+    "OBSERVATION: Edge file:src/cli.rs → file:src/runner.rs (imports) may be semantically reversed. In Rust, runner.rs references crate::cli::ValidatedRunArgs, so the dependency flows runner→cli rather than cli→runner. However the class-level edge function:run_ab → class:ValidatedRunArgs (depends_on) correctly captures this. The file-level import edge is left as-is since the import map cannot confirm direction and removing it risks losing information."
+  ]
+}
