@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
 use crate::runner::{RunRecord, VariantSlot};
-use crate::swebench::Prediction;
+use crate::swebench::{Prediction, SMOKE_INSTANCE_IDS};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -208,6 +208,28 @@ pub fn harness_raw_path(out: &Path, variant: VariantSlot) -> PathBuf {
     }
 }
 
+/// Write a minimal output directory ready for harness evaluation: empty patches
+/// for all bundled smoke tasks, for variants A and B.
+pub fn write_minimum_valid_dir(out: &Path) ->Result<(), String> {
+    fs::create_dir_all(out.join("predictions"))
+        .map_err(|e| format!("failed to create predictions directory: {e}"))?;
+    fs::create_dir_all(out.join("harness"))
+        .map_err(|e| format!("failed to create harness directory: {e}"))?;
+
+    for variant in [VariantSlot::A, VariantSlot::B] { 
+        let prediction = SMOKE_INSTANCE_IDS
+            .iter()
+            .map(|instance_id| SwebenchPrediction {
+                instance_id: (*instance_id).to_string(),
+                model_patch: String::new(),
+                model_name_or_path: variant.model_name_or_path().to_string(),
+            })
+            .collect::<Vec<_>>();
+        write_predictions_jsonl(&predictions_path(out, variant), &prediction)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +269,30 @@ mod tests {
             .expect("write harness json");
         let result = load_harness_results(&path).expect("load harness");
         assert_eq!(result.resolved_ids, vec!["astropy__astropy-12907"]);
+    }
+
+    #[test]
+    fn write_minimum_valid_out_dir_writes_ab_predictions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_minimum_valid_dir(dir.path()).expect("write fixture");
+
+        assert!(dir.path().join("harness").is_dir());
+
+        for variant in [VariantSlot::A, VariantSlot::B] {
+            let path = predictions_path(dir.path(), variant);
+            let contents = fs::read_to_string(&path).expect("read predictions");
+            let lines: Vec<&str> = contents
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .collect();
+            assert_eq!(lines.len(), SMOKE_INSTANCE_IDS.len());
+            for line in lines {
+                let parsed: SwebenchPrediction =
+                    serde_json::from_str(line).expect("parse prediction");
+                assert!(parsed.model_patch.is_empty());
+                assert_eq!(parsed.model_name_or_path, variant.model_name_or_path());
+            }
+        }
     }
 
     #[test]
