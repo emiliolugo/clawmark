@@ -1,15 +1,9 @@
-mod cli;
-mod doctor;
-mod report;
-mod results;
-mod runner;
-mod sandbox;
-mod swebench;
+
 
 use clap::Parser;
 use tokio::runtime::Builder;
-
-use crate::cli::{Cli, Commands};
+use clawmark::{doctor, report, runner};
+use clawmark::cli::{Cli, Commands};
 
 fn main() {
     let cli = Cli::parse();

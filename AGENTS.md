@@ -2,6 +2,10 @@
 
 This file is the entry point for AI agents working on this codebase.
 
+## Communication
+
+Be concise. Answer the question directly; skip preamble, long tables, and repeated summaries unless the user asks for depth.
+
 ## Project
 
 `clawmark` is a local Rust CLI that A/B tests exactly two `CLAUDE.md` files against SWE-bench Lite. See [CLAUDE.md](./CLAUDE.md) for project-level coding guidelines.
