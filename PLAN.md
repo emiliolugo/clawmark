@@ -8,8 +8,12 @@
 
 **Ships in v1:**
 - `clawmark doctor` — validate local prerequisites before a run
-- `clawmark run --a <path> --b <path> --model <model> --timeout-secs <seconds> --out <dir>` — run exactly two `CLAUDE.md` variants against the bundled 5-task SWE-bench Lite smoke set
-- `clawmark report --out <dir>` — read existing output and print a simple A vs B summary
+- `clawmark run --a <path> --b <path> --model <model> [--model-a <model>] [--model-b <model>] --timeout-secs <seconds> --out <dir>` — run exactly two `CLAUDE.md` variants against the bundled 5-task SWE-bench Lite smoke set. `--model` is the shared default; `--model-a`/`--model-b` optionally override the model for variant A or B respectively.
+- `clawmark report --out <dir>` — read existing output and print a simple A vs B summary, including per-variant wall-clock time, input tokens, output tokens, and estimated USD cost
+
+**Intentional scope expansion (recorded here per AGENTS.md policy):**
+- Per-variant model overrides (`--model-a`/`--model-b`, both optional, defaulting to `--model`) are in scope. No new dependencies are required.
+- Per-variant time/token/cost reporting is in scope. Token usage and USD cost are captured from the `claude -p --output-format json` output and aggregated per variant in the report. Cost is shown as `n/a` when the CLI does not provide it. Time was already recorded as `elapsed_secs` in `run_records.jsonl`; tokens and cost are newly captured fields. `schema_version` is bumped from 1 to 2 in both `run_records.jsonl` records and `report.json`. No new dependencies are added; parsing uses the existing `serde_json` crate. Budget enforcement, per-task cost caps, and whole-run accounting beyond reporting remain out of scope.
 
 **Does not ship in v1:**
 - More than two variants per run
@@ -26,7 +30,7 @@
 - Automatic dependency installation
 - Distributed execution
 - HumanEval or any other benchmark
-- Full cost accounting
+- Budget enforcement, per-task cost caps, or aggregate cost accounting beyond per-variant reporting
 - Persistent clone or result cache beyond the current output directory
 - Progress bars or rich terminal UI
 - Release automation
@@ -39,10 +43,10 @@
 
 **v1 is complete when:**
 1. `doctor` validates all prerequisites
-2. `clawmark run --a variants/a.md --b variants/b.md --model sonnet --timeout-secs 300 --out out` executes the bundled 5-task SWE-bench Lite smoke subset end-to-end
+2. `clawmark run --a variants/a.md --b variants/b.md --model sonnet --timeout-secs 300 --out out` executes the bundled 5-task SWE-bench Lite smoke subset end-to-end (optional `--model-a`/`--model-b` override the per-variant model)
 3. The run evaluates both variants on the same tasks with one trial per variant/task
 4. Only doctor-check failures and Claude auth failure abort the entire run; all other per-task Claude/git failures record an error and continue
-5. Output includes per-task A/B outcomes, total resolved counts, win/loss/tie counts, raw prediction files, raw harness results, and `out/report.json`
+5. Output includes per-task A/B outcomes, total resolved counts, win/loss/tie counts, per-variant time/token/cost totals, raw prediction files, raw harness results, and `out/report.json`
 6. CI passes for non-Docker tests (`cargo fmt --check`, `cargo clippy`, `cargo test`)
 
 **Required acceptance tests:**
@@ -106,7 +110,9 @@ v1 is intentionally a reliable 5-task smoke runner. Do not add partial or full 3
 | `--a` / `--b` location | Each canonical path must be inside the process current working directory |
 | `--a` / `--b` identity | A and B must not resolve to the same canonical file |
 | `--a` / `--b` filename | The filename may be anything; clawmark injects the file contents as `CLAUDE.md` inside each temp workspace |
-| `--model` | Non-empty string; passed as one argv element to `claude --model` |
+| `--model` | Non-empty string; shared default model passed to `claude --model` for both variants |
+| `--model-a` | Optional non-empty string; overrides `--model` for variant A only |
+| `--model-b` | Optional non-empty string; overrides `--model` for variant B only |
 | `--timeout-secs` | Integer from 1 to 86_400 |
 | `--out` for `run` | Parent directory must exist; `--out` itself must not already exist; clawmark creates it |
 | `--out` for `report` | Directory must already exist and contain the expected v1 output files |
@@ -187,7 +193,7 @@ out/
   report.json                    # final A/B aggregate report
 ```
 
-Every `run_records.jsonl` line includes `"schema_version": 1`. `report.json` includes top-level `"schema_version": 1`.
+Every `run_records.jsonl` line includes `"schema_version": 2`. `report.json` includes top-level `"schema_version": 2`. (Schema version was bumped from 1 to 2 when per-variant token/cost fields were added.)
 
 ---
 
@@ -325,10 +331,14 @@ pub struct RunKey {
 }
 
 pub struct RunRecord {
-    pub schema_version: u32,    // always 1 in v1
+    pub schema_version: u32,    // always 2 in v1 (bumped from 1 when token/cost fields added)
     pub key: RunKey,
+    pub model: String,          // actual model used for this invocation
     pub prediction: Prediction,
     pub elapsed_secs: f64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,  // None when the Claude CLI did not report cost
     pub error: Option<String>,  // None means Claude produced a prediction
 }
 
@@ -411,7 +421,7 @@ Cloned repos live inside `TempDir` and are deleted with the workspace. No persis
 |---|---|---|
 | Variant file contents | No (read at run time) | user-managed |
 | Problem statements | No | embedded in dataset |
-| Model output (raw JSON) | No | discarded after patch extraction |
+| Model output (raw JSON) | No | discarded after patch and usage extraction |
 | Patches (git diff) | Yes | `out/run_records.jsonl` |
 | Harness results | Yes | `out/harness/a.json` and `out/harness/b.json` |
 | Aggregate report | Yes | `out/report.json` |
@@ -466,8 +476,16 @@ All checks run in sequence. Print a status table. Exit 1 if any check fails (not
 | `b_wins` | Count of tasks where B resolved and A did not |
 | `ties_both_resolved` | Count of tasks both variants resolved |
 | `ties_both_failed` | Count of tasks neither variant resolved |
+| `a_elapsed_secs` | Total wall-clock seconds across all variant A invocations |
+| `b_elapsed_secs` | Total wall-clock seconds across all variant B invocations |
+| `a_input_tokens` | Total input tokens across all variant A invocations (`null` if unavailable) |
+| `b_input_tokens` | Total input tokens across all variant B invocations (`null` if unavailable) |
+| `a_output_tokens` | Total output tokens across all variant A invocations (`null` if unavailable) |
+| `b_output_tokens` | Total output tokens across all variant B invocations (`null` if unavailable) |
+| `a_cost_usd` | Estimated total USD cost for variant A (`null` when the Claude CLI did not provide it) |
+| `b_cost_usd` | Estimated total USD cost for variant B (`null` when the Claude CLI did not provide it) |
 
-The terminal report prints these counts and the total task count. `report.json` stores the same values plus per-task outcomes.
+The terminal report prints the win/loss/tie counts, total task count, and per-variant time/token/cost summary (cost displayed as `n/a` when absent). `report.json` stores the same values plus per-task outcomes.
 
 Resolved parsing rule:
 

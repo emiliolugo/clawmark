@@ -36,6 +36,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub model: String,
     #[arg(long)]
+    pub model_a: Option<String>,
+    #[arg(long)]
+    pub model_b: Option<String>,
+    #[arg(long)]
     pub timeout_secs: u64,
     #[arg(long)]
     pub out: PathBuf,
@@ -67,8 +71,9 @@ impl RunArgs {
             return Err("variant paths --a and --b must resolve to different files".to_string());
         }
 
-        let model = self.model.trim();
-        if model.is_empty() {
+        let resolved_a = self.model_a.as_deref().unwrap_or(&self.model).trim();
+        let resolved_b = self.model_b.as_deref().unwrap_or(&self.model).trim();
+        if resolved_a.is_empty() || resolved_b.is_empty() {
             return Err("--model must be a non-empty string".to_string());
         }
 
@@ -89,7 +94,8 @@ impl RunArgs {
         Ok(ValidatedRunArgs {
             a_canonical,
             b_canonical,
-            model: model.to_string(),
+            model_a: resolved_a.to_string(),
+            model_b: resolved_b.to_string(),
             timeout_secs: self.timeout_secs,
             out: self.out.clone(),
             parallel,
@@ -101,7 +107,8 @@ impl RunArgs {
 pub struct ValidatedRunArgs {
     pub a_canonical: PathBuf,
     pub b_canonical: PathBuf,
-    pub model: String,
+    pub model_a: String,
+    pub model_b: String,
     pub timeout_secs: u64,
     pub out: PathBuf,
     pub parallel: usize,
@@ -193,6 +200,8 @@ mod tests {
             a,
             b,
             model: "sonnet".to_string(),
+            model_a: None,
+            model_b: None,
             timeout_secs: 300,
             out: dir.join(out_name),
             parallel: None,
@@ -256,6 +265,8 @@ mod tests {
             a,
             b,
             model: "   ".to_string(),
+            model_a: None,
+            model_b: None,
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -275,6 +286,8 @@ mod tests {
             a,
             b,
             model: "sonnet".to_string(),
+            model_a: None,
+            model_b: None,
             timeout_secs: 0,
             out: dir.path().join("out"),
             parallel: None,
@@ -318,6 +331,8 @@ mod tests {
             a,
             b,
             model: "sonnet".to_string(),
+            model_a: None,
+            model_b: None,
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: Some(0),
@@ -337,6 +352,8 @@ mod tests {
             a,
             b,
             model: "sonnet".to_string(),
+            model_a: None,
+            model_b: None,
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: Some(1),
@@ -354,12 +371,58 @@ mod tests {
             a,
             b,
             model: "sonnet".to_string(),
+            model_a: None,
+            model_b: None,
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: Some(8),
         };
         let validated = args.validate_with_cwd(dir.path()).expect("should accept 8");
         assert_eq!(validated.parallel, 8);
+    }
+
+    #[test]
+    fn run_defaults_per_variant_models_to_shared() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = RunArgs {
+            a,
+            b,
+            model: "sonnet".to_string(),
+            model_a: None,
+            model_b: None,
+            timeout_secs: 300,
+            out: dir.path().join("out"),
+            parallel: None,
+        };
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        assert_eq!(validated.model_a, "sonnet");
+        assert_eq!(validated.model_b, "sonnet");
+    }
+
+    #[test]
+    fn run_overrides_model_b() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = RunArgs {
+            a,
+            b,
+            model: "sonnet".to_string(),
+            model_a: None,
+            model_b: Some("haiku".to_string()),
+            timeout_secs: 300,
+            out: dir.path().join("out"),
+            parallel: None,
+        };
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        assert_eq!(validated.model_a, "sonnet");
+        assert_eq!(validated.model_b, "haiku");
     }
 
     #[test]

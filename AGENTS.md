@@ -22,7 +22,7 @@ The full phased implementation plan (architecture, types, security rules, milest
 
 **No scope creep.** Implement exactly what PLAN.md specifies for the current phase — nothing more. Do not add flags, config fields, abstractions, or error variants that aren't required by the phase's deliverables. If something seems like a natural extension, note it in a comment or TODO, but do not implement it.
 
-**Protect the minimal v1.** v1 is only `doctor`, `run --a <path> --b <path> --model <model> --timeout-secs <seconds> --out <dir> [--parallel N]`, and `report --out <dir> [--show-patches]` for local SWE-bench Lite A/B testing. Do not add N-variant matrices, repeated trials, pass@k, McNemar/Wilson statistics, resume/retry systems, plugin APIs, cloud/remote execution, progress UI, release automation, or whole-run cost accounting unless PLAN.md is intentionally expanded first.
+**Protect the minimal v1.** v1 is only `doctor`, `run --a <path> --b <path> --model <model> [--model-a <model>] [--model-b <model>] --timeout-secs <seconds> --out <dir> [--parallel N]`, and `report --out <dir> [--show-patches]` for local SWE-bench Lite A/B testing. Do not add N-variant matrices, repeated trials, pass@k, McNemar/Wilson statistics, resume/retry systems, plugin APIs, cloud/remote execution, progress UI, release automation, or aggregate cost caps unless PLAN.md is intentionally expanded first. Per-variant time, token, and cost REPORTING is in scope (intentionally expanded); budget enforcement, per-task cost caps, and whole-run accounting beyond reporting remain out of scope.
 
 **Prefer direct A/B concepts.** Use fixed variant slots `A` and `B`, simple output files (`a.jsonl`, `b.jsonl`, `a.json`, `b.json`), and win/loss/tie report metrics. Avoid generic benchmark abstractions until there is a second benchmark target.
 
@@ -45,8 +45,8 @@ The full phased implementation plan (architecture, types, security rules, milest
 - Task set: bundled 5-task smoke subset only, fixed to the IDs listed in PLAN.md
 - Variants: exactly two local files, addressed as A and B
 - Execution: up to `--parallel N` Claude invocations concurrently within each variant pass (default N=1, sequential); harness always runs serially, one invocation per variant
-- Reporting: resolved counts plus A wins, B wins, ties, and both-failed counts; `--show-patches` displays each task's patch truncated to 20 lines; failure summary printed automatically when any task is unresolved
-- Claude invocation: `claude -p --output-format json --dangerously-skip-permissions --model <model> --add-dir <workspace> -- <problem_statement>` (note: `--bare` is intentionally NOT used; see the comment in `src/runner.rs`)
+- Reporting: resolved counts plus A wins, B wins, ties, and both-failed counts; per-variant wall-clock time (seconds), input tokens, output tokens, and estimated USD cost (shown as `n/a` when the Claude CLI did not provide it); `--show-patches` displays each task's patch truncated to 20 lines; failure summary printed automatically when any task is unresolved
+- Claude invocation: `claude -p --output-format json --dangerously-skip-permissions --model <model> --add-dir <workspace> -- <problem_statement>` (note: `--bare` is intentionally NOT used; see the comment in `src/runner.rs`). A and B may use different models via `--model-a`/`--model-b`; both default to `--model` when the per-variant override is absent.
 - Docker: required (SWE-bench harness uses per-instance containers)
 - No shell strings in subprocesses — always `Command` argv arrays (harness) or tokio `Command` (Claude, when parallel)
 - Empty `git diff HEAD` means unresolved; write an empty patch

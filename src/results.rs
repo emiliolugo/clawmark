@@ -11,7 +11,7 @@ use tempfile::NamedTempFile;
 use crate::runner::{RunRecord, VariantSlot};
 use crate::swebench::{Prediction, SMOKE_INSTANCE_IDS};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 pub const RUN_RECORDS_FILE: &str = "run_records.jsonl";
 pub const PREDICTIONS_A_FILE: &str = "predictions/a.jsonl";
@@ -313,6 +313,7 @@ mod tests {
             },
             elapsed_secs: 1.0,
             error: None,
+            usage: None,
         };
         append_run_record(&path, &record).expect("append");
         let records = load_run_records(&path).expect("load");

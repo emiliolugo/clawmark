@@ -56,6 +56,20 @@ cargo run -- run \
   --out out
 ```
 
+To run variant A on one model and variant B on another, use `--model-a` or `--model-b` to override the shared default for that variant:
+
+```sh
+cargo run -- run \
+  --a variants/a.md \
+  --b variants/b.md \
+  --model sonnet \
+  --model-b haiku \
+  --timeout-secs 300 \
+  --out out
+```
+
+In this example, A uses `sonnet` (the shared default) and B uses `haiku`. Both `--model-a` and `--model-b` are optional; omitting either causes that variant to use `--model`.
+
 This performs:
 
 ```text
@@ -76,6 +90,8 @@ cargo run -- run \
   --out out
 ```
 
+After building a release binary:
+
 Print the report from existing output:
 
 ```sh
@@ -88,7 +104,7 @@ To also display each task's model patch (truncated to 20 lines):
 cargo run -- report --out out --show-patches
 ```
 
-After building a release binary, the same commands can be run as:
+The report prints resolved counts, A/B win/loss/tie counts, and per-variant wall-clock time, input tokens, output tokens, and estimated USD cost (shown as `n/a` when the Claude CLI did not provide cost data).
 
 ```sh
 cargo build --release
@@ -100,6 +116,8 @@ cargo build --release
 ## Runtime And Budget Warnings
 
 v1 is intentionally minimal and does not enforce a turn limit, token budget, retry policy, or per-task cost cap. `--timeout-secs` is only a wall-clock timeout around each Claude invocation. A broad `CLAUDE.md` can spend the full timeout exploring the repo, installing dependencies, or running tests without producing a patch.
+
+`clawmark report` now shows per-variant totals for wall-clock time, input tokens, output tokens, and estimated USD cost. This is reporting only — clawmark does not enforce or cap any of these values.
 
 For first e2e runs, use strict benchmark-oriented variants:
 
@@ -153,25 +171,26 @@ clawmark doctor
 Checks Docker, Claude CLI, Claude authentication, Python, `swebench`, the SWE-bench harness CLI, git, Docker Hub registry reachability, and whether the SWE-bench Docker image is already present.
 
 ```sh
-clawmark run --a <path> --b <path> --model <model> --timeout-secs <seconds> --out <dir> [--parallel N]
+clawmark run --a <path> --b <path> --model <model> [--model-a <model>] [--model-b <model>] --timeout-secs <seconds> --out <dir> [--parallel N]
 ```
 
-Runs the fixed five-task A/B benchmark. `--timeout-secs` must be between `1` and `86400`; it applies to each Claude invocation and is also passed to the SWE-bench harness. `--parallel N` (default: `1`) allows up to N Claude invocations to run concurrently within each variant pass. The SWE-bench harness is always invoked serially, once per variant.
+Runs the fixed five-task A/B benchmark. `--model` is the shared default model for both variants. `--model-a` and `--model-b` are optional overrides; if given, they replace `--model` for that variant only. `--timeout-secs` must be between `1` and `86400`; it applies to each Claude invocation and is also passed to the SWE-bench harness. `--parallel N` (default: `1`) allows up to N Claude invocations to run concurrently within each variant pass. The SWE-bench harness is always invoked serially, once per variant.
 
 ```sh
 clawmark report --out <dir> [--show-patches]
 ```
 
-Reads existing harness output, prints resolved counts, A wins, B wins, both-resolved ties, and both-failed ties, then writes `report.json`. With `--show-patches`, also prints each task's model patch truncated to 20 lines.
+Reads existing harness output, prints resolved counts, A wins, B wins, both-resolved ties, and both-failed ties, and per-variant totals for wall-clock time, input tokens, output tokens, and estimated USD cost (shown as `n/a` when unavailable), then writes `report.json`. With `--show-patches`, also prints each task's model patch truncated to 20 lines.
 
 ## Input Rules
 
 - `--a` and `--b` must exist and be regular files after symlink resolution.
 - Both variant paths must be inside the process current working directory.
 - A and B must resolve to different canonical files.
-- `--model` must be a non-empty string and is passed as one argument to `claude --model`.
+- `--model` must be a non-empty string and is passed as one argument to `claude --model`. It is the shared default for both variants.
+- `--model-a` and `--model-b` are optional. When given, each must be a non-empty string and overrides `--model` for that variant only.
 - `run --out` requires an existing parent directory and a destination that does not already exist.
-- `report --out` requires an existing v1 output directory with harness results.
+- `report --out` requires an existing output directory with harness results.
 
 Variant filenames do not need to be `CLAUDE.md`; their contents are injected as `CLAUDE.md` inside each temporary task workspace.
 
@@ -191,7 +210,7 @@ out/
 
 `run_records.jsonl` stores one record per variant/task attempt. `predictions/a.jsonl` and `predictions/b.jsonl` are the SWE-bench harness inputs. `harness/a.json` and `harness/b.json` are stable copies of the raw SWE-bench summary files. `report.json` stores the final A/B aggregate report.
 
-All clawmark-owned records include `schema_version: 1`.
+All clawmark-owned records include `schema_version: 2`.
 
 ## Failure Behavior
 

@@ -54,6 +54,15 @@ pub struct RunKey {
     pub instance_id: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ClaudeUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub cost_usd: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunRecord {
     pub schema_version: u32,
@@ -61,6 +70,8 @@ pub struct RunRecord {
     pub prediction: Prediction,
     pub elapsed_secs: f64,
     pub error: Option<String>,
+    #[serde(default)]
+    pub usage: Option<ClaudeUsage>,
 }
 
 /// Outcome of a single `claude` invocation.
@@ -68,7 +79,7 @@ pub struct RunRecord {
 /// `Auth` aborts the entire run. `Other` is a recoverable per-task error that is
 /// stored on the `RunRecord` so the run can continue with the next task.
 enum ClaudeOutcome {
-    Ok,
+    Ok(ClaudeUsage),
     Auth(String),
     Other(String),
 }
@@ -160,7 +171,10 @@ async fn run_variant(
     let predictions = Arc::new(tokio::sync::Mutex::new(Vec::with_capacity(tasks.len())));
     let variant_contents = Arc::new(variant_contents.to_vec());
     let variant_hash = variant_hash.to_string();
-    let model = args.model.clone();
+    let model = match variant {
+        VariantSlot::A => args.model_a.clone(),
+        VariantSlot::B => args.model_b.clone(),
+    };
     let timeout_secs = args.timeout_secs;
     let run_records = run_records.to_path_buf();
 
@@ -252,6 +266,7 @@ pub fn run_single(
     let started = Instant::now();
     let mut error: Option<String> = None;
     let mut patch = String::new();
+    let mut usage: Option<ClaudeUsage> = None;
 
     match sandbox::create(task) {
         Err(clone_error) => error = Some(clone_error),
@@ -265,7 +280,9 @@ pub fn run_single(
                     &task.problem_statement,
                     timeout_secs,
                 ) {
-                    ClaudeOutcome::Ok => {}
+                    ClaudeOutcome::Ok(u) => {
+                        usage = Some(u);
+                    }
                     ClaudeOutcome::Auth(message) => {
                         return Err(format!(
                             "Claude authentication failure; aborting run: {message}"
@@ -305,6 +322,7 @@ pub fn run_single(
         },
         elapsed_secs,
         error,
+        usage,
     })
 }
 
@@ -319,7 +337,9 @@ fn invoke_claude(
         .args(&argv)
         .current_dir(workspace_path)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        // The JSON result is small (well under the OS pipe buffer), so draining
+        // only after exit is safe.
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
 
@@ -357,7 +377,7 @@ fn invoke_claude(
     };
 
     if output.status.success() {
-        return ClaudeOutcome::Ok;
+        return ClaudeOutcome::Ok(parse_claude_usage(&output.stdout));
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -409,6 +429,44 @@ fn claude_argv(model: &str, workspace_path: &Path, problem_statement: &str) -> V
         OsString::from("--"),
         OsString::from(problem_statement),
     ]
+}
+
+/// Parse `ClaudeUsage` from the raw stdout bytes of a `claude -p --output-format json`
+/// invocation. Never fails: any parse error returns `ClaudeUsage::default()`.
+fn parse_claude_usage(stdout: &[u8]) -> ClaudeUsage {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(stdout) else {
+        return ClaudeUsage::default();
+    };
+    let input_tokens = v
+        .get("usage")
+        .and_then(|u| u.get("input_tokens"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = v
+        .get("usage")
+        .and_then(|u| u.get("output_tokens"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cache_read_input_tokens = v
+        .get("usage")
+        .and_then(|u| u.get("cache_read_input_tokens"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation_input_tokens = v
+        .get("usage")
+        .and_then(|u| u.get("cache_creation_input_tokens"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cost_usd = v
+        .get("total_cost_usd")
+        .and_then(serde_json::Value::as_f64);
+    ClaudeUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_input_tokens,
+        cache_creation_input_tokens,
+        cost_usd,
+    }
 }
 
 /// Invoke the SWE-bench harness once for a variant, then copy the raw summary
@@ -658,6 +716,7 @@ mod tests {
             },
             elapsed_secs: 1.0,
             error: Some("claude timed out after 300s".to_string()),
+            usage: None,
         };
 
         let failures = collect_failure_entries(&report, &[record]);
@@ -713,5 +772,33 @@ mod tests {
         let err = finalize_harness_summary(dir.path(), VariantSlot::B)
             .expect_err("missing raw should error");
         assert!(err.contains("raw summary missing"));
+    }
+
+    #[test]
+    fn parse_claude_usage_reads_fields() {
+        let input = br#"{"total_cost_usd":0.0123,"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":5,"cache_creation_input_tokens":7}}"#;
+        let usage = parse_claude_usage(input);
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 200);
+        assert_eq!(usage.cache_read_input_tokens, 5);
+        assert_eq!(usage.cache_creation_input_tokens, 7);
+        assert_eq!(usage.cost_usd, Some(0.0123));
+    }
+
+    #[test]
+    fn parse_claude_usage_defaults_on_garbage() {
+        let usage = parse_claude_usage(b"not json");
+        assert_eq!(usage, ClaudeUsage::default());
+    }
+
+    #[test]
+    fn parse_claude_usage_missing_usage_object() {
+        let input = br#"{"result":"ok"}"#;
+        let usage = parse_claude_usage(input);
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_input_tokens, 0);
+        assert_eq!(usage.cache_creation_input_tokens, 0);
+        assert_eq!(usage.cost_usd, None);
     }
 }
