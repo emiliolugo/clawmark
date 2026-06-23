@@ -1,9 +1,7 @@
-
-
 use clap::Parser;
-use tokio::runtime::Builder;
-use clawmark::{doctor, report, runner};
 use clawmark::cli::{Cli, Commands};
+use clawmark::{doctor, report, runner};
+use tokio::runtime::Builder;
 
 fn main() {
     let cli = Cli::parse();

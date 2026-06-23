@@ -121,7 +121,11 @@ pub fn aggregate_report(a: &HarnessResult, b: &HarnessResult) -> Report {
 ///
 /// If any record has a `Some` cost, the sum is `Some`; if none do, it is `None`.
 #[must_use]
-pub fn variant_totals(records: &[RunRecord], variant: VariantSlot, resolved: usize) -> VariantTotals {
+pub fn variant_totals(
+    records: &[RunRecord],
+    variant: VariantSlot,
+    resolved: usize,
+) -> VariantTotals {
     let mut elapsed_secs = 0.0_f64;
     let mut input_tokens = 0_u64;
     let mut output_tokens = 0_u64;
@@ -162,10 +166,23 @@ pub fn render_terminal_table(report: &Report) {
 
     println!();
     println!("metrics            A            B");
-    println!("time (s):    {:>10.1}  {:>10.1}", report.a_totals.elapsed_secs, report.b_totals.elapsed_secs);
-    println!("input tokens:{:>10}  {:>10}", report.a_totals.input_tokens, report.b_totals.input_tokens);
-    println!("output tokens:{:>9}  {:>10}", report.a_totals.output_tokens, report.b_totals.output_tokens);
-    println!("cost (USD):  {:>10}  {:>10}", fmt_cost(report.a_totals.cost_usd), fmt_cost(report.b_totals.cost_usd));
+    println!(
+        "time (s):    {:>10.1}  {:>10.1}",
+        report.a_totals.elapsed_secs, report.b_totals.elapsed_secs
+    );
+    println!(
+        "input tokens:{:>10}  {:>10}",
+        report.a_totals.input_tokens, report.b_totals.input_tokens
+    );
+    println!(
+        "output tokens:{:>9}  {:>10}",
+        report.a_totals.output_tokens, report.b_totals.output_tokens
+    );
+    println!(
+        "cost (USD):  {:>10}  {:>10}",
+        fmt_cost(report.a_totals.cost_usd),
+        fmt_cost(report.b_totals.cost_usd)
+    );
 }
 
 pub fn write_report_json(out: &Path, report: &Report) -> Result<(), String> {
@@ -214,9 +231,9 @@ pub fn render_patches(out: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::results::HarnessResult;
+    use crate::results::SCHEMA_VERSION;
     use crate::runner::{ClaudeUsage, RunKey, RunRecord, VariantSlot};
     use crate::swebench::Prediction;
-    use crate::results::SCHEMA_VERSION;
 
     fn harness(resolved: &[&str]) -> HarnessResult {
         HarnessResult {
@@ -285,7 +302,11 @@ mod tests {
         assert_eq!(report.b_resolved, 0);
     }
 
-    fn make_record(variant: VariantSlot, elapsed_secs: f64, usage: Option<ClaudeUsage>) -> RunRecord {
+    fn make_record(
+        variant: VariantSlot,
+        elapsed_secs: f64,
+        usage: Option<ClaudeUsage>,
+    ) -> RunRecord {
         RunRecord {
             schema_version: SCHEMA_VERSION,
             key: RunKey {

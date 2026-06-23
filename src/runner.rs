@@ -457,9 +457,7 @@ fn parse_claude_usage(stdout: &[u8]) -> ClaudeUsage {
         .and_then(|u| u.get("cache_creation_input_tokens"))
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
-    let cost_usd = v
-        .get("total_cost_usd")
-        .and_then(serde_json::Value::as_f64);
+    let cost_usd = v.get("total_cost_usd").and_then(serde_json::Value::as_f64);
     ClaudeUsage {
         input_tokens,
         output_tokens,

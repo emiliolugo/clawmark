@@ -210,13 +210,13 @@ pub fn harness_raw_path(out: &Path, variant: VariantSlot) -> PathBuf {
 
 /// Write a minimal output directory ready for harness evaluation: empty patches
 /// for all bundled smoke tasks, for variants A and B.
-pub fn write_minimum_valid_dir(out: &Path) ->Result<(), String> {
+pub fn write_minimum_valid_dir(out: &Path) -> Result<(), String> {
     fs::create_dir_all(out.join("predictions"))
         .map_err(|e| format!("failed to create predictions directory: {e}"))?;
     fs::create_dir_all(out.join("harness"))
         .map_err(|e| format!("failed to create harness directory: {e}"))?;
 
-    for variant in [VariantSlot::A, VariantSlot::B] { 
+    for variant in [VariantSlot::A, VariantSlot::B] {
         let prediction = SMOKE_INSTANCE_IDS
             .iter()
             .map(|instance_id| SwebenchPrediction {
