@@ -50,13 +50,66 @@ pub fn create(task: &TaskInstance) -> Result<Workspace, String> {
     })
 }
 
-/// Write the variant file contents as `CLAUDE.md` at the root of the cloned repo.
+/// What to overlay into a cloned workspace for one variant.
 ///
-/// Uses `std::fs::write`, never a subprocess.
-pub fn inject_claude_md(workspace: &Workspace, variant_contents: &[u8]) -> Result<(), String> {
-    let target = workspace.path.join("CLAUDE.md");
-    std::fs::write(&target, variant_contents)
-        .map_err(|e| format!("failed to write {}: {e}", target.display()))
+/// `File` is a single CLAUDE.md written at the repo root (legacy single-file variant). `Dir` is
+/// a directory whose entire contents are copied into the repo root, allowing a full `.claude/`
+/// config (settings.json, commands, agents, skills, hooks) plus an optional CLAUDE.md.
+#[derive(Debug)]
+pub enum VariantSource {
+    File(Vec<u8>),
+    Dir(PathBuf),
+}
+
+/// Overlay a variant onto the cloned repo before invoking Claude.
+///
+/// For `File`, the bytes are written verbatim to `<repo>/CLAUDE.md`. For `Dir`, the directory's
+/// contents are copied recursively into the repo root. A top-level `.git` entry is skipped so the
+/// clone history is never clobbered, and symlinks are ignored. Injected files are untracked in the
+/// clone, so they never appear in `git diff HEAD`.
+pub fn inject_variant(workspace: &Workspace, source: &VariantSource) -> Result<(), String> {
+    match source {
+        VariantSource::File(bytes) => {
+            let target = workspace.path.join("CLAUDE.md");
+            std::fs::write(&target, bytes)
+                .map_err(|e| format!("failed to write {}: {e}", target.display()))
+        }
+        VariantSource::Dir(src) => copy_dir_recursive(src, &workspace.path, true),
+    }
+}
+
+/// Recursively copy the *contents* of `src` into `dst` (not `src` itself). Creates intermediate
+/// directories as needed. At the root level, a `.git` entry is skipped. Symlinks and other special
+/// files are ignored. Existing files in `dst` with the same relative path are overwritten.
+fn copy_dir_recursive(src: &Path, dst: &Path, is_root: bool) -> Result<(), String> {
+    let entries = std::fs::read_dir(src)
+        .map_err(|e| format!("failed to read variant directory {}: {e}", src.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("failed to read entry in {}: {e}", src.display()))?;
+        let file_name = entry.file_name();
+        if is_root && file_name.to_str() == Some(".git") {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&file_name);
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("failed to stat {}: {e}", from.display()))?;
+        if file_type.is_dir() {
+            std::fs::create_dir_all(&to)
+                .map_err(|e| format!("failed to create {}: {e}", to.display()))?;
+            copy_dir_recursive(&from, &to, false)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+            }
+            std::fs::copy(&from, &to).map_err(|e| {
+                format!("failed to copy {} -> {}: {e}", from.display(), to.display())
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// Collect the ground-truth patch via `git diff HEAD`.
@@ -158,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn inject_claude_md_writes_file_in_repo() {
+    fn inject_variant_file_writes_claude_md() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let repo = temp_dir.path().join("repo");
         std::fs::create_dir(&repo).expect("repo dir");
@@ -166,8 +219,59 @@ mod tests {
             _temp_dir: temp_dir,
             path: repo.clone(),
         };
-        inject_claude_md(&workspace, b"variant contents").expect("inject");
+        inject_variant(
+            &workspace,
+            &VariantSource::File(b"variant contents".to_vec()),
+        )
+        .expect("inject");
         let read = std::fs::read(repo.join("CLAUDE.md")).expect("read");
         assert_eq!(read, b"variant contents");
+    }
+
+    #[test]
+    fn inject_variant_dir_copies_tree_and_skips_git() {
+        let src_dir = tempfile::tempdir().expect("src tempdir");
+        let src = src_dir.path();
+
+        // Create variant directory structure
+        std::fs::write(src.join("CLAUDE.md"), b"variant dir contents").expect("write CLAUDE.md");
+        std::fs::create_dir(src.join(".claude")).expect(".claude dir");
+        std::fs::write(src.join(".claude").join("settings.json"), b"{}")
+            .expect("write settings.json");
+        std::fs::create_dir(src.join(".claude").join("commands")).expect("commands dir");
+        std::fs::write(
+            src.join(".claude").join("commands").join("foo.md"),
+            b"foo command",
+        )
+        .expect("write foo.md");
+        // This should be skipped
+        std::fs::create_dir(src.join(".git")).expect(".git dir");
+        std::fs::write(src.join(".git").join("config"), b"[core]").expect("write .git/config");
+
+        let temp_dir = tempfile::tempdir().expect("repo tempdir");
+        let repo = temp_dir.path().join("repo");
+        std::fs::create_dir(&repo).expect("repo dir");
+        let workspace = Workspace {
+            _temp_dir: temp_dir,
+            path: repo.clone(),
+        };
+
+        inject_variant(&workspace, &VariantSource::Dir(src.to_path_buf())).expect("inject dir");
+
+        // These should exist
+        let claude_md = std::fs::read(repo.join("CLAUDE.md")).expect("read CLAUDE.md");
+        assert_eq!(claude_md, b"variant dir contents");
+        let settings =
+            std::fs::read(repo.join(".claude").join("settings.json")).expect("read settings.json");
+        assert_eq!(settings, b"{}");
+        let foo_cmd = std::fs::read(repo.join(".claude").join("commands").join("foo.md"))
+            .expect("read foo.md");
+        assert_eq!(foo_cmd, b"foo command");
+
+        // .git must NOT have been copied
+        assert!(
+            !repo.join(".git").exists(),
+            ".git must not be copied into repo"
+        );
     }
 }

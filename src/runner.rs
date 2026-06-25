@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cli::{ValidatedRunArgs, ValidatedVariant};
+use crate::cli::{ValidatedRunArgs, ValidatedVariant, VariantKind};
 use crate::report;
 use crate::results::{
     append_run_record, harness_path, harness_raw_path, load_run_records, predictions_path,
@@ -127,10 +127,13 @@ async fn run_variant(
     let semaphore = Arc::new(tokio::sync::Semaphore::new(args.parallel));
     let write_lock = Arc::new(tokio::sync::Mutex::new(()));
     let predictions = Arc::new(tokio::sync::Mutex::new(Vec::with_capacity(tasks.len())));
-    let variant_contents = Arc::new(
-        fs::read(&variant.canonical_path)
-            .map_err(|e| format!("failed to read variant {}: {e}", variant.label))?,
-    );
+    let source = Arc::new(match variant.kind {
+        VariantKind::File => sandbox::VariantSource::File(
+            fs::read(&variant.canonical_path)
+                .map_err(|e| format!("failed to read variant {}: {e}", variant.label))?,
+        ),
+        VariantKind::Dir => sandbox::VariantSource::Dir(variant.canonical_path.clone()),
+    });
 
     let variant_id = VariantId {
         index: variant.index,
@@ -147,7 +150,7 @@ async fn run_variant(
         let sem = Arc::clone(&semaphore);
         let write_lock = Arc::clone(&write_lock);
         let predictions = Arc::clone(&predictions);
-        let vc = Arc::clone(&variant_contents);
+        let src = Arc::clone(&source);
         let vh = variant_hash.clone();
         let model = model.clone();
         let run_records = run_records.clone();
@@ -160,7 +163,7 @@ async fn run_variant(
             println!("[{variant_label}] {instance_id}");
 
             let record_result = tokio::task::spawn_blocking(move || {
-                run_single(&variant_id, &vh, vc.as_slice(), &task, &model, timeout_secs)
+                run_single(&variant_id, &vh, src.as_ref(), &task, &model, timeout_secs)
             })
             .await
             .map_err(|e| format!("task panicked: {e}"))?;
@@ -215,7 +218,7 @@ async fn run_variant(
 pub fn run_single(
     variant: &VariantId,
     variant_hash: &str,
-    variant_contents: &[u8],
+    source: &sandbox::VariantSource,
     task: &TaskInstance,
     model: &str,
     timeout_secs: u64,
@@ -228,7 +231,7 @@ pub fn run_single(
     match sandbox::create(task) {
         Err(clone_error) => error = Some(clone_error),
         Ok(workspace) => {
-            if let Err(inject_error) = sandbox::inject_claude_md(&workspace, variant_contents) {
+            if let Err(inject_error) = sandbox::inject_variant(&workspace, source) {
                 error = Some(inject_error);
             } else {
                 match invoke_claude(

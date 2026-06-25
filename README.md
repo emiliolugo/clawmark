@@ -4,7 +4,7 @@
 
 > Which of these `CLAUDE.md` files performs better on a small SWE-bench Lite smoke set?
 
-v1 runs two or more local variant files against five bundled SWE-bench Lite tasks. It runs Claude locally, evaluates the generated patches with the official SWE-bench harness in Docker, and writes a leaderboard report.
+v1 runs two or more local variants against five bundled SWE-bench Lite tasks. Each variant is either a single file (injected as `CLAUDE.md`) or a directory containing a full `.claude/` config (and optional `CLAUDE.md`) that is overlaid onto the repo. It runs Claude locally, evaluates the generated patches with the official SWE-bench harness in Docker, and writes a leaderboard report.
 
 ## What Ships In v1
 
@@ -43,6 +43,33 @@ Create two or more variant files somewhere inside the current working directory:
 mkdir -p variants
 $EDITOR variants/a.md
 $EDITOR variants/b.md
+```
+
+### Variant files vs. directories
+
+A **file variant** — its contents are written verbatim as `CLAUDE.md` at the repo root. The filename does not need to be `CLAUDE.md`.
+
+A **directory variant** — its contents are copied into the repo root, so a `.claude/` subdirectory (settings.json, commands, agents, skills, hooks) and/or a top-level `CLAUDE.md` are picked up by Claude. A top-level `.git` entry in the variant directory is skipped.
+
+Example layout for a directory variant:
+
+```text
+variants/strict/
+  CLAUDE.md
+  .claude/
+    settings.json
+    commands/plan.md
+```
+
+Run it with:
+
+```sh
+cargo run -- run \
+  --a variants/a.md \
+  --b variants/strict \
+  --model sonnet \
+  --timeout-secs 300 \
+  --out out
 ```
 
 ### Two-variant alias form
@@ -168,7 +195,7 @@ For each task and variant, `clawmark`:
 
 1. Clones the SWE-bench target repository into a temporary workspace.
 2. Checks out the task's base commit.
-3. Writes the selected variant file as `CLAUDE.md` at the repo root.
+3. Overlays the variant onto the repo root: a file variant is written as `CLAUDE.md`; a directory variant has its contents copied in (a top-level `.git` is skipped).
 4. Invokes Claude with the task problem statement.
 5. Captures `git diff HEAD` as the model patch.
 
@@ -215,7 +242,7 @@ Reads existing harness output, prints a leaderboard ranked by resolve rate (then
 ## Input Rules
 
 **Alias form (`--a/--b/--model`):**
-- `--a` and `--b` must exist and be regular files after symlink resolution.
+- `--a` and `--b` must exist and be either a regular file or a directory after symlink resolution.
 - Both variant paths must be inside the process current working directory.
 - A and B must resolve to different canonical files.
 - `--model` must be a non-empty string and is passed as one argument to `claude --model`. It is the shared default for both variants.
@@ -224,7 +251,7 @@ Reads existing harness output, prints a leaderboard ranked by resolve rate (then
 **N-variant form (`--variant/--variant-model`):**
 - At least two `--variant label=path` entries are required.
 - Each label must match `^[a-z0-9][a-z0-9_-]*$` and be unique within the run.
-- Each variant path must exist as a regular file, be inside the current working directory, and resolve to a unique canonical path.
+- Each variant path must exist as a regular file or a directory, be inside the current working directory, and resolve to a unique canonical path.
 - Every label must have a corresponding `--variant-model label=model` entry with a non-empty model string.
 - The two forms are mutually exclusive — mixing `--a/--b/--model` with `--variant/--variant-model` in the same invocation is an error.
 
@@ -232,7 +259,7 @@ Reads existing harness output, prints a leaderboard ranked by resolve rate (then
 - `run --out` requires an existing parent directory and a destination that does not already exist.
 - `report --out` requires an existing output directory.
 
-Variant filenames do not need to be `CLAUDE.md`; their contents are injected as `CLAUDE.md` inside each temporary task workspace.
+A file variant's contents are injected as `CLAUDE.md` inside each temporary task workspace (its own filename does not matter). A directory variant is copied verbatim into the workspace root, so place a `.claude/` subdirectory and/or `CLAUDE.md` at the top level of the variant directory.
 
 ## Output Layout
 

@@ -76,11 +76,18 @@ pub struct ValidatedRunArgs {
     pub parallel: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VariantKind {
+    File,
+    Dir,
+}
+
 #[derive(Debug, Clone)]
 pub struct ValidatedVariant {
     pub index: usize,
     pub label: String,
     pub canonical_path: PathBuf,
+    pub kind: VariantKind,
     pub model: String,
     pub hash: String,
 }
@@ -148,8 +155,8 @@ impl RunArgs {
             "--model is required when using the two-variant alias form".to_string()
         })?;
 
-        let a_canonical = validate_variant_path(a, cwd)?;
-        let b_canonical = validate_variant_path(b, cwd)?;
+        let (a_canonical, a_kind) = validate_variant_path(a, cwd)?;
+        let (b_canonical, b_kind) = validate_variant_path(b, cwd)?;
         if a_canonical == b_canonical {
             return Err("variant paths --a and --b must resolve to different files".to_string());
         }
@@ -165,15 +172,17 @@ impl RunArgs {
                 index: 0,
                 label: "a".to_string(),
                 canonical_path: a_canonical.clone(),
+                kind: a_kind,
                 model: model_a.to_string(),
-                hash: compute_variant_hash(&a_canonical)?,
+                hash: compute_variant_hash(&a_canonical, a_kind)?,
             },
             ValidatedVariant {
                 index: 1,
                 label: "b".to_string(),
                 canonical_path: b_canonical.clone(),
+                kind: b_kind,
                 model: model_b.to_string(),
-                hash: compute_variant_hash(&b_canonical)?,
+                hash: compute_variant_hash(&b_canonical, b_kind)?,
             },
         ])
     }
@@ -206,7 +215,7 @@ impl RunArgs {
                 return Err(format!("duplicate variant label: {label}"));
             }
 
-            let canonical_path = validate_variant_path(Path::new(&path), cwd)?;
+            let (canonical_path, kind) = validate_variant_path(Path::new(&path), cwd)?;
             if !seen_paths.insert(canonical_path.clone()) {
                 return Err(format!(
                     "variant path {} resolves to a duplicate canonical file",
@@ -227,8 +236,9 @@ impl RunArgs {
                 index,
                 label,
                 canonical_path: canonical_path.clone(),
+                kind,
                 model: model.trim().to_string(),
-                hash: compute_variant_hash(&canonical_path)?,
+                hash: compute_variant_hash(&canonical_path, kind)?,
             });
         }
 
@@ -250,15 +260,19 @@ impl ReportArgs {
     }
 }
 
-fn validate_variant_path(path: &Path, cwd: &Path) -> Result<PathBuf, String> {
+fn validate_variant_path(path: &Path, cwd: &Path) -> Result<(PathBuf, VariantKind), String> {
     let metadata =
         fs::metadata(path).map_err(|e| format!("variant path {}: {e}", path.display()))?;
-    if !metadata.is_file() {
+    let kind = if metadata.is_file() {
+        VariantKind::File
+    } else if metadata.is_dir() {
+        VariantKind::Dir
+    } else {
         return Err(format!(
-            "variant path {} must be a regular file",
+            "variant path {} must be a regular file or a directory",
             path.display()
         ));
-    }
+    };
 
     let canonical = path
         .canonicalize()
@@ -274,7 +288,7 @@ fn validate_variant_path(path: &Path, cwd: &Path) -> Result<PathBuf, String> {
         ));
     }
 
-    Ok(canonical)
+    Ok((canonical, kind))
 }
 
 fn validate_run_out_dir(out: &Path) -> Result<(), String> {
@@ -355,10 +369,15 @@ fn validate_variant_label(label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn compute_variant_hash(path: &Path) -> Result<String, String> {
-    let contents =
-        fs::read(path).map_err(|e| format!("failed to read variant {}: {e}", path.display()))?;
-    Ok(crate::results::variant_hash(&contents))
+fn compute_variant_hash(path: &Path, kind: VariantKind) -> Result<String, String> {
+    match kind {
+        VariantKind::File => {
+            let contents = fs::read(path)
+                .map_err(|e| format!("failed to read variant {}: {e}", path.display()))?;
+            Ok(crate::results::variant_hash(&contents))
+        }
+        VariantKind::Dir => crate::results::hash_variant_dir(path),
+    }
 }
 
 #[cfg(test)]
@@ -735,6 +754,23 @@ mod tests {
             .validate_with_cwd(dir.path())
             .expect_err("expected validation error");
         assert!(err.contains("missing --variant-model for label beta"));
+    }
+
+    #[test]
+    fn run_accepts_directory_variants() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir_a = dir.path().join("var_a");
+        let dir_b = dir.path().join("var_b");
+        fs::create_dir(&dir_a).expect("dir_a");
+        fs::create_dir(&dir_b).expect("dir_b");
+        write_file(&dir_a, "CLAUDE.md", "variant a");
+        write_file(&dir_b, "CLAUDE.md", "variant b");
+        let args = valid_alias_run_args(dir.path(), dir_a, dir_b, "out");
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("directory variants should validate");
+        assert_eq!(validated.variants[0].kind, VariantKind::Dir);
+        assert_eq!(validated.variants[1].kind, VariantKind::Dir);
     }
 
     #[test]

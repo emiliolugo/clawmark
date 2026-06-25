@@ -56,6 +56,63 @@ pub fn variant_hash(contents: &[u8]) -> String {
     hex::encode(digest)
 }
 
+/// Deterministic hash of a directory's full recursive file contents.
+///
+/// Files are collected recursively, sorted by their `/`-joined relative path, then fed into a
+/// single SHA-256 with length-prefixed contents so the digest is independent of filesystem walk
+/// order and unambiguous across path/content boundaries. Only regular files contribute; empty
+/// directories and symlinks are ignored.
+pub fn hash_variant_dir(root: &Path) -> Result<String, String> {
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    collect_files(root, root, &mut files)?;
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut hasher = Sha256::new();
+    for (rel, abs) in &files {
+        let contents =
+            fs::read(abs).map_err(|e| format!("failed to read {}: {e}", abs.display()))?;
+        let len = u64::try_from(contents.len())
+            .map_err(|_| format!("file {} too large to hash", abs.display()))?;
+        hasher.update(rel.as_bytes());
+        hasher.update([0u8]);
+        hasher.update(len.to_le_bytes());
+        hasher.update(&contents);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
+    let entries = fs::read_dir(dir)
+        .map_err(|e| format!("failed to read directory {}: {e}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("failed to read entry in {}: {e}", dir.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("failed to stat {}: {e}", path.display()))?;
+        if file_type.is_dir() {
+            collect_files(root, &path, out)?;
+        } else if file_type.is_file() {
+            out.push((relative_slash_path(root, &path)?, path));
+        }
+    }
+    Ok(())
+}
+
+fn relative_slash_path(root: &Path, path: &Path) -> Result<String, String> {
+    let rel = path
+        .strip_prefix(root)
+        .map_err(|_| format!("path {} is not under {}", path.display(), root.display()))?;
+    let mut parts = Vec::new();
+    for comp in rel.components() {
+        match comp {
+            std::path::Component::Normal(s) => parts.push(s.to_string_lossy().into_owned()),
+            _ => return Err(format!("unexpected path component in {}", rel.display())),
+        }
+    }
+    Ok(parts.join("/"))
+}
+
 pub fn write_atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
@@ -238,6 +295,25 @@ mod tests {
     use super::*;
     use crate::runner::{RunKey, VariantId};
     use crate::swebench::Prediction;
+
+    #[test]
+    fn hash_variant_dir_is_deterministic_and_content_sensitive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let claude_dir = dir.path().join(".claude");
+        fs::create_dir(&claude_dir).expect("create .claude dir");
+        fs::write(dir.path().join("CLAUDE.md"), "variant instructions").expect("write CLAUDE.md");
+        fs::write(claude_dir.join("settings.json"), r#"{"model":"sonnet"}"#)
+            .expect("write settings.json");
+
+        let hash1 = hash_variant_dir(dir.path()).expect("hash 1");
+        let hash2 = hash_variant_dir(dir.path()).expect("hash 2");
+        assert_eq!(hash1, hash2, "hash must be deterministic");
+        assert_eq!(hash1.len(), 64, "hash must be 64 hex chars");
+
+        fs::write(dir.path().join("CLAUDE.md"), "different content").expect("modify CLAUDE.md");
+        let hash3 = hash_variant_dir(dir.path()).expect("hash 3");
+        assert_ne!(hash1, hash3, "hash must change when content changes");
+    }
 
     #[test]
     fn variant_hash_is_stable_sha256_hex() {
