@@ -1,229 +1,281 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use crate::results::{
-    load_harness_results, load_run_records, write_atomic_json, HarnessResult, REPORT_FILE,
-    RUN_RECORDS_FILE, SCHEMA_VERSION,
+    harness_path, load_harness_results, load_run_records, load_variants_manifest,
+    write_atomic_json, HarnessResult, REPORT_FILE, RUN_RECORDS_FILE, SCHEMA_VERSION,
+    V1_HARNESS_A_FILE, V1_HARNESS_B_FILE, VARIANTS_FILE,
 };
-use crate::runner::{RunRecord, VariantSlot};
+use crate::runner::RunRecord;
 use crate::swebench::SMOKE_INSTANCE_IDS;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskOutcome {
+pub struct TaskRow {
     pub instance_id: String,
-    pub a_resolved: bool,
-    pub b_resolved: bool,
+    pub resolved: Vec<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VariantTotals {
+pub struct VariantSummary {
+    pub label: String,
+    pub model: String,
     pub resolved: usize,
+    pub resolve_rate: f64,
+    pub ci_low: f64,
+    pub ci_high: f64,
     pub elapsed_secs: f64,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cost_usd: Option<f64>,
+    pub cost_per_resolve: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PairStat {
+    pub a_label: String,
+    pub b_label: String,
+    pub a_wins: usize,
+    pub b_wins: usize,
+    pub b_count: usize,
+    pub c_count: usize,
+    pub p_value: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Report {
     pub schema_version: u32,
     pub total_tasks: usize,
-    pub a_resolved: usize,
-    pub b_resolved: usize,
-    pub a_wins: usize,
-    pub b_wins: usize,
-    pub ties_both_resolved: usize,
-    pub ties_both_failed: usize,
-    pub tasks: Vec<TaskOutcome>,
-    pub a_totals: VariantTotals,
-    pub b_totals: VariantTotals,
+    pub variants: Vec<VariantSummary>,
+    pub per_task: Vec<TaskRow>,
+    pub pairwise: Vec<PairStat>,
 }
 
 #[allow(clippy::module_name_repetitions)]
 pub fn compute_report(out: &Path) -> Result<Report, String> {
-    let a = load_harness_results(&out.join(crate::results::HARNESS_A_FILE))?;
-    let b = load_harness_results(&out.join(crate::results::HARNESS_B_FILE))?;
-    let mut report = aggregate_report(&a, &b);
+    let manifest_path = out.join(VARIANTS_FILE);
+    if !manifest_path.is_file() {
+        if out.join(V1_HARNESS_A_FILE).is_file() && out.join(V1_HARNESS_B_FILE).is_file() {
+            return Err("run produced with clawmark v1; re-run to get a v1.1 report".to_string());
+        }
+        return Err(format!(
+            "expected output file missing: {}",
+            manifest_path.display()
+        ));
+    }
+
+    let variants = load_variants_manifest(&manifest_path)?;
+    if variants.len() < 2 {
+        return Err("variants.json must contain at least two variants".to_string());
+    }
+
+    let mut harnesses = Vec::with_capacity(variants.len());
+    for variant in &variants {
+        harnesses.push((
+            variant.label.clone(),
+            load_harness_results(&harness_path(out, &variant.label))?,
+        ));
+    }
+
     let records = load_run_records(&out.join(RUN_RECORDS_FILE)).unwrap_or_default();
-    report.a_totals = variant_totals(&records, VariantSlot::A, report.a_resolved);
-    report.b_totals = variant_totals(&records, VariantSlot::B, report.b_resolved);
-    Ok(report)
+    Ok(aggregate_report(
+        &variants
+            .iter()
+            .map(|v| (v.label.clone(), v.model.clone()))
+            .collect::<Vec<_>>(),
+        &harnesses,
+        &records,
+    ))
 }
 
 #[allow(clippy::module_name_repetitions)]
-pub fn aggregate_report(a: &HarnessResult, b: &HarnessResult) -> Report {
-    let a_resolved_set: HashSet<&str> = a.resolved_ids.iter().map(String::as_str).collect();
-    let b_resolved_set: HashSet<&str> = b.resolved_ids.iter().map(String::as_str).collect();
+pub fn aggregate_report(
+    variants: &[(String, String)],
+    harnesses: &[(String, HarnessResult)],
+    records: &[RunRecord],
+) -> Report {
+    let total_tasks = SMOKE_INSTANCE_IDS.len();
+    let mut per_task = Vec::with_capacity(total_tasks);
 
-    let mut a_resolved = 0;
-    let mut b_resolved = 0;
-    let mut a_wins = 0;
-    let mut b_wins = 0;
-    let mut ties_both_resolved = 0;
-    let mut ties_both_failed = 0;
-    let mut tasks = Vec::new();
+    let mut resolved_sets = Vec::with_capacity(harnesses.len());
+    for (_, h) in harnesses {
+        let set: HashSet<&str> = h.resolved_ids.iter().map(String::as_str).collect();
+        resolved_sets.push(set);
+    }
 
     for instance_id in SMOKE_INSTANCE_IDS {
-        let a_ok = a_resolved_set.contains(instance_id);
-        let b_ok = b_resolved_set.contains(instance_id);
-
-        if a_ok {
-            a_resolved += 1;
+        let mut row = Vec::with_capacity(resolved_sets.len());
+        for set in &resolved_sets {
+            row.push(set.contains(instance_id));
         }
-        if b_ok {
-            b_resolved += 1;
-        }
-
-        match (a_ok, b_ok) {
-            (true, false) => a_wins += 1,
-            (false, true) => b_wins += 1,
-            (true, true) => ties_both_resolved += 1,
-            (false, false) => ties_both_failed += 1,
-        }
-
-        tasks.push(TaskOutcome {
+        per_task.push(TaskRow {
             instance_id: instance_id.to_string(),
-            a_resolved: a_ok,
-            b_resolved: b_ok,
+            resolved: row,
         });
+    }
+
+    let mut summaries = Vec::with_capacity(variants.len());
+    for (label, model) in variants {
+        let resolved = per_task
+            .iter()
+            .filter(|row| {
+                row.resolved
+                    .iter()
+                    .enumerate()
+                    .any(|(idx, val)| variants[idx].0 == *label && *val)
+            })
+            .count();
+        let resolve_rate = usize_to_f64(resolved) / usize_to_f64(total_tasks);
+
+        let mut elapsed_secs = 0.0_f64;
+        let mut input_tokens = 0_u64;
+        let mut output_tokens = 0_u64;
+        let mut cost_usd: Option<f64> = None;
+        for record in records.iter().filter(|r| r.key.variant.label == *label) {
+            elapsed_secs += record.elapsed_secs;
+            if let Some(usage) = &record.usage {
+                input_tokens += usage.input_tokens;
+                output_tokens += usage.output_tokens;
+                if let Some(c) = usage.cost_usd {
+                    cost_usd = Some(cost_usd.unwrap_or(0.0) + c);
+                }
+            }
+        }
+        let cost_per_resolve = match (cost_usd, resolved) {
+            (Some(cost), r) if r > 0 => Some(cost / usize_to_f64(r)),
+            _ => None,
+        };
+
+        summaries.push(VariantSummary {
+            label: label.clone(),
+            model: model.clone(),
+            resolved,
+            resolve_rate,
+            // Phase B replaces placeholders with Wilson CI.
+            ci_low: resolve_rate,
+            ci_high: resolve_rate,
+            elapsed_secs,
+            input_tokens,
+            output_tokens,
+            cost_usd,
+            cost_per_resolve,
+        });
+    }
+
+    summaries.sort_by(|a, b| {
+        b.resolve_rate
+            .partial_cmp(&a.resolve_rate)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| match (a.cost_per_resolve, b.cost_per_resolve) {
+                (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+            .then_with(|| a.label.cmp(&b.label))
+    });
+
+    let old_index_by_label: HashMap<String, usize> = variants
+        .iter()
+        .enumerate()
+        .map(|(idx, (label, _))| (label.clone(), idx))
+        .collect();
+    let sorted_indices = summaries
+        .iter()
+        .filter_map(|summary| old_index_by_label.get(&summary.label).copied())
+        .collect::<Vec<_>>();
+    for row in &mut per_task {
+        let reordered = sorted_indices
+            .iter()
+            .map(|idx| row.resolved[*idx])
+            .collect::<Vec<_>>();
+        row.resolved = reordered;
     }
 
     Report {
         schema_version: SCHEMA_VERSION,
-        total_tasks: SMOKE_INSTANCE_IDS.len(),
-        a_resolved,
-        b_resolved,
-        a_wins,
-        b_wins,
-        ties_both_resolved,
-        ties_both_failed,
-        tasks,
-        a_totals: VariantTotals {
-            resolved: a_resolved,
-            elapsed_secs: 0.0,
-            input_tokens: 0,
-            output_tokens: 0,
-            cost_usd: None,
-        },
-        b_totals: VariantTotals {
-            resolved: b_resolved,
-            elapsed_secs: 0.0,
-            input_tokens: 0,
-            output_tokens: 0,
-            cost_usd: None,
-        },
+        total_tasks,
+        variants: summaries,
+        per_task,
+        pairwise: Vec::new(),
     }
 }
 
-/// Sum elapsed time, tokens, and cost for records belonging to `variant`.
-///
-/// If any record has a `Some` cost, the sum is `Some`; if none do, it is `None`.
-#[must_use]
-pub fn variant_totals(
-    records: &[RunRecord],
-    variant: VariantSlot,
-    resolved: usize,
-) -> VariantTotals {
-    let mut elapsed_secs = 0.0_f64;
-    let mut input_tokens = 0_u64;
-    let mut output_tokens = 0_u64;
-    let mut cost_usd: Option<f64> = None;
-
-    for r in records.iter().filter(|r| r.key.variant == variant) {
-        elapsed_secs += r.elapsed_secs;
-        if let Some(u) = &r.usage {
-            input_tokens += u.input_tokens;
-            output_tokens += u.output_tokens;
-            if let Some(c) = u.cost_usd {
-                cost_usd = Some(cost_usd.unwrap_or(0.0) + c);
-            }
-        }
-    }
-
-    VariantTotals {
-        resolved,
-        elapsed_secs,
-        input_tokens,
-        output_tokens,
-        cost_usd,
-    }
+fn usize_to_f64(value: usize) -> f64 {
+    f64::from(u32::try_from(value).expect("value should fit into u32"))
 }
 
 pub fn render_terminal_table(report: &Report) {
-    println!("clawmark A/B report");
-    println!("-------------------");
-    println!("total tasks:          {}", report.total_tasks);
-    println!("A resolved:           {}", report.a_resolved);
-    println!("B resolved:           {}", report.b_resolved);
-    println!("A wins:               {}", report.a_wins);
-    println!("B wins:               {}", report.b_wins);
-    println!("ties (both resolved): {}", report.ties_both_resolved);
-    println!("ties (both failed):   {}", report.ties_both_failed);
-
-    let fmt_cost = |c: Option<f64>| c.map_or_else(|| "n/a".to_string(), |v| format!("{v:.4}"));
+    println!("clawmark leaderboard");
+    println!("--------------------");
+    println!("total tasks: {}", report.total_tasks);
+    println!();
+    println!("rank  variant  resolved  rate    cost/resolve");
+    for (idx, variant) in report.variants.iter().enumerate() {
+        let cost_per_resolve = variant
+            .cost_per_resolve
+            .map_or_else(|| "n/a".to_string(), |v| format!("{v:.4}"));
+        println!(
+            "{:>4}  {:<7}  {:>3}/{:<3}   {:>5.1}%  {}",
+            idx + 1,
+            variant.label,
+            variant.resolved,
+            report.total_tasks,
+            variant.resolve_rate * 100.0,
+            cost_per_resolve
+        );
+    }
 
     println!();
-    println!("metrics            A            B");
-    println!(
-        "time (s):    {:>10.1}  {:>10.1}",
-        report.a_totals.elapsed_secs, report.b_totals.elapsed_secs
-    );
-    println!(
-        "input tokens:{:>10}  {:>10}",
-        report.a_totals.input_tokens, report.b_totals.input_tokens
-    );
-    println!(
-        "output tokens:{:>9}  {:>10}",
-        report.a_totals.output_tokens, report.b_totals.output_tokens
-    );
-    println!(
-        "cost (USD):  {:>10}  {:>10}",
-        fmt_cost(report.a_totals.cost_usd),
-        fmt_cost(report.b_totals.cost_usd)
-    );
+    println!("per-task matrix (variant order above):");
+    for row in &report.per_task {
+        let cells = row
+            .resolved
+            .iter()
+            .map(|v| if *v { "1" } else { "0" })
+            .collect::<Vec<_>>()
+            .join(" ");
+        println!("{}: {}", row.instance_id, cells);
+    }
 }
 
 pub fn write_report_json(out: &Path, report: &Report) -> Result<(), String> {
     write_atomic_json(&out.join(REPORT_FILE), report)
 }
 
-/// Print each task's model patch for both variants, truncated to 20 lines each.
-///
-/// Reads `run_records.jsonl` from `out`. Returns an error if the file is missing or unreadable.
 pub fn render_patches(out: &Path) -> Result<(), String> {
     let records = load_run_records(&out.join(RUN_RECORDS_FILE))?;
+    let variants = load_variants_manifest(&out.join(VARIANTS_FILE))?;
 
     println!();
     println!("Patches:");
     println!("---------");
-
     for instance_id in SMOKE_INSTANCE_IDS {
         println!("{instance_id}");
-        for label in ["a", "b"] {
-            println!("  [{label}]:");
+        for variant in &variants {
+            println!("  [{}]:", variant.label);
             let patch = records
                 .iter()
-                .find(|r| r.key.variant.label() == label && r.key.instance_id == instance_id)
+                .find(|r| r.key.variant.label == variant.label && r.key.instance_id == instance_id)
                 .map_or("", |r| r.prediction.model_patch.as_str());
 
             if patch.is_empty() {
                 println!("    (empty patch)");
-            } else {
-                let mut line_count = 0usize;
-                for line in patch.lines().take(20) {
-                    println!("    {line}");
-                    line_count += 1;
-                }
-                let total = patch.lines().count();
-                if total > line_count {
-                    println!("    ... ({} more lines)", total - line_count);
-                }
+                continue;
+            }
+            let mut line_count = 0usize;
+            for line in patch.lines().take(20) {
+                println!("    {line}");
+                line_count += 1;
+            }
+            let total = patch.lines().count();
+            if total > line_count {
+                println!("    ... ({} more lines)", total - line_count);
             }
         }
     }
-
     Ok(())
 }
 
@@ -231,8 +283,7 @@ pub fn render_patches(out: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::results::HarnessResult;
-    use crate::results::SCHEMA_VERSION;
-    use crate::runner::{ClaudeUsage, RunKey, RunRecord, VariantSlot};
+    use crate::runner::{ClaudeUsage, RunKey, RunRecord, VariantId};
     use crate::swebench::Prediction;
 
     fn harness(resolved: &[&str]) -> HarnessResult {
@@ -241,83 +292,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn report_counts_a_win() {
-        let report = aggregate_report(
-            &harness(&["astropy__astropy-12907"]),
-            &HarnessResult {
-                resolved_ids: Vec::new(),
-            },
-        );
-        assert_eq!(report.a_wins, 1);
-        assert_eq!(report.b_wins, 0);
-        assert_eq!(report.ties_both_resolved, 0);
-        assert_eq!(report.ties_both_failed, 4);
-        assert!(report.tasks[0].a_resolved);
-        assert!(!report.tasks[0].b_resolved);
-    }
-
-    #[test]
-    fn report_counts_b_win() {
-        let report = aggregate_report(
-            &HarnessResult {
-                resolved_ids: Vec::new(),
-            },
-            &harness(&["astropy__astropy-14182"]),
-        );
-        assert_eq!(report.a_wins, 0);
-        assert_eq!(report.b_wins, 1);
-        assert_eq!(report.ties_both_resolved, 0);
-        assert_eq!(report.ties_both_failed, 4);
-        assert!(!report.tasks[1].a_resolved);
-        assert!(report.tasks[1].b_resolved);
-    }
-
-    #[test]
-    fn report_counts_both_resolved_tie() {
-        let report = aggregate_report(
-            &harness(&["astropy__astropy-14365"]),
-            &harness(&["astropy__astropy-14365"]),
-        );
-        assert_eq!(report.ties_both_resolved, 1);
-        assert_eq!(report.a_wins, 0);
-        assert_eq!(report.b_wins, 0);
-        assert!(report.tasks[2].a_resolved);
-        assert!(report.tasks[2].b_resolved);
-    }
-
-    #[test]
-    fn report_counts_both_failed_tie() {
-        let report = aggregate_report(
-            &HarnessResult {
-                resolved_ids: Vec::new(),
-            },
-            &HarnessResult {
-                resolved_ids: Vec::new(),
-            },
-        );
-        assert_eq!(report.ties_both_failed, 5);
-        assert_eq!(report.ties_both_resolved, 0);
-        assert_eq!(report.a_resolved, 0);
-        assert_eq!(report.b_resolved, 0);
-    }
-
-    fn make_record(
-        variant: VariantSlot,
-        elapsed_secs: f64,
-        usage: Option<ClaudeUsage>,
-    ) -> RunRecord {
+    fn make_record(label: &str, elapsed_secs: f64, usage: Option<ClaudeUsage>) -> RunRecord {
         RunRecord {
             schema_version: SCHEMA_VERSION,
             key: RunKey {
-                variant,
+                variant: VariantId {
+                    index: 0,
+                    label: label.to_string(),
+                },
                 variant_hash: "abc".to_string(),
                 instance_id: "astropy__astropy-12907".to_string(),
             },
             prediction: Prediction {
                 instance_id: "astropy__astropy-12907".to_string(),
                 model_patch: String::new(),
-                model_name_or_path: variant.model_name_or_path().to_string(),
+                model_name_or_path: format!("clawmark/{label}"),
             },
             elapsed_secs,
             error: None,
@@ -326,57 +315,80 @@ mod tests {
     }
 
     #[test]
-    fn variant_totals_sums_usage_and_time() {
+    fn report_aggregates_three_variants() {
+        let variants = vec![
+            ("a".to_string(), "sonnet".to_string()),
+            ("b".to_string(), "haiku".to_string()),
+            ("c".to_string(), "opus".to_string()),
+        ];
+        let harnesses = vec![
+            ("a".to_string(), harness(&["astropy__astropy-12907"])),
+            (
+                "b".to_string(),
+                harness(&["astropy__astropy-12907", "astropy__astropy-14182"]),
+            ),
+            ("c".to_string(), harness(&[])),
+        ];
+        let report = aggregate_report(&variants, &harnesses, &[]);
+        assert_eq!(report.total_tasks, 5);
+        assert_eq!(report.variants.len(), 3);
+        assert_eq!(report.per_task.len(), 5);
+        assert!(report.variants[0].resolve_rate >= report.variants[1].resolve_rate);
+    }
+
+    #[test]
+    fn leaderboard_tiebreak_uses_cost_per_resolve_then_label() {
+        let variants = vec![
+            ("a".to_string(), "m1".to_string()),
+            ("b".to_string(), "m2".to_string()),
+        ];
+        let harnesses = vec![
+            ("a".to_string(), harness(&["astropy__astropy-12907"])),
+            ("b".to_string(), harness(&["astropy__astropy-12907"])),
+        ];
         let records = vec![
             make_record(
-                VariantSlot::A,
-                10.0,
+                "a",
+                1.0,
                 Some(ClaudeUsage {
-                    input_tokens: 100,
-                    output_tokens: 50,
-                    cache_read_input_tokens: 5,
-                    cache_creation_input_tokens: 3,
-                    cost_usd: Some(0.01),
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    cache_read_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                    cost_usd: Some(2.0),
                 }),
             ),
             make_record(
-                VariantSlot::A,
-                5.0,
+                "b",
+                1.0,
                 Some(ClaudeUsage {
-                    input_tokens: 200,
-                    output_tokens: 80,
+                    input_tokens: 1,
+                    output_tokens: 1,
                     cache_read_input_tokens: 0,
                     cache_creation_input_tokens: 0,
-                    cost_usd: Some(0.02),
-                }),
-            ),
-            // usage: None should contribute zero tokens and not force cost to Some
-            make_record(VariantSlot::A, 2.0, None),
-            // variant B record should be ignored
-            make_record(
-                VariantSlot::B,
-                99.0,
-                Some(ClaudeUsage {
-                    input_tokens: 999,
-                    output_tokens: 999,
-                    cache_read_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                    cost_usd: Some(9.99),
+                    cost_usd: Some(1.0),
                 }),
             ),
         ];
+        let report = aggregate_report(&variants, &harnesses, &records);
+        assert_eq!(report.variants[0].label, "b");
+    }
 
-        let totals = variant_totals(&records, VariantSlot::A, 1);
-        assert_eq!(totals.resolved, 1);
-        assert!((totals.elapsed_secs - 17.0).abs() < f64::EPSILON);
-        assert_eq!(totals.input_tokens, 300);
-        assert_eq!(totals.output_tokens, 130);
-        assert!((totals.cost_usd.unwrap() - 0.03).abs() < 1e-9);
-
-        // Records with no cost usage should not affect a variant whose other
-        // records also have no cost — cost_usd should remain None.
-        let none_records = vec![make_record(VariantSlot::A, 1.0, None)];
-        let no_cost = variant_totals(&none_records, VariantSlot::A, 0);
-        assert_eq!(no_cost.cost_usd, None);
+    #[test]
+    fn v1_directory_rejected_with_clear_message() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("harness")).expect("harness");
+        std::fs::write(
+            dir.path().join(V1_HARNESS_A_FILE),
+            r#"{"resolved_ids":["astropy__astropy-12907"]}"#,
+        )
+        .expect("a");
+        std::fs::write(
+            dir.path().join(V1_HARNESS_B_FILE),
+            r#"{"resolved_ids":["astropy__astropy-12907"]}"#,
+        )
+        .expect("b");
+        let err = compute_report(dir.path()).expect_err("expected v1 rejection");
+        assert!(err.contains("run produced with clawmark v1"));
     }
 }

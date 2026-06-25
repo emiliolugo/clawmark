@@ -19,7 +19,7 @@ fn main() {
                         std::process::exit(1);
                     }
                 };
-                match rt.block_on(runner::run_ab(&validated)) {
+                match rt.block_on(runner::run_all(&validated)) {
                     Ok(()) => 0,
                     Err(message) => {
                         eprintln!("error: {message}");

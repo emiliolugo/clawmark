@@ -8,22 +8,17 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
-use crate::runner::{RunRecord, VariantSlot};
+use crate::runner::RunRecord;
 use crate::swebench::{Prediction, SMOKE_INSTANCE_IDS};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 pub const RUN_RECORDS_FILE: &str = "run_records.jsonl";
-pub const PREDICTIONS_A_FILE: &str = "predictions/a.jsonl";
-pub const PREDICTIONS_B_FILE: &str = "predictions/b.jsonl";
-pub const HARNESS_A_FILE: &str = "harness/a.json";
-pub const HARNESS_B_FILE: &str = "harness/b.json";
 pub const REPORT_FILE: &str = "report.json";
+pub const VARIANTS_FILE: &str = "variants.json";
 
-pub const REPORT_REQUIRED_FILES: [&str; 2] = [HARNESS_A_FILE, HARNESS_B_FILE];
-
-pub const HARNESS_RAW_A_FILE: &str = "harness/clawmark__a.clawmark-a.json";
-pub const HARNESS_RAW_B_FILE: &str = "harness/clawmark__b.clawmark-b.json";
+pub const V1_HARNESS_A_FILE: &str = "harness/a.json";
+pub const V1_HARNESS_B_FILE: &str = "harness/b.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SwebenchPrediction {
@@ -45,6 +40,15 @@ impl From<&Prediction> for SwebenchPrediction {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct HarnessResult {
     pub resolved_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VariantManifestEntry {
+    pub index: usize,
+    pub label: String,
+    pub path: String,
+    pub hash: String,
+    pub model: String,
 }
 
 pub fn variant_hash(contents: &[u8]) -> String {
@@ -187,25 +191,24 @@ pub fn load_harness_results(path: &Path) -> Result<HarnessResult, String> {
     Ok(HarnessResult { resolved_ids })
 }
 
-pub fn predictions_path(out: &Path, variant: VariantSlot) -> PathBuf {
-    match variant {
-        VariantSlot::A => out.join(PREDICTIONS_A_FILE),
-        VariantSlot::B => out.join(PREDICTIONS_B_FILE),
-    }
+pub fn load_variants_manifest(path: &Path) -> Result<Vec<VariantManifestEntry>, String> {
+    let file = File::open(path)
+        .map_err(|e| format!("failed to open variants manifest {}: {e}", path.display()))?;
+    serde_json::from_reader(file)
+        .map_err(|e| format!("failed to parse variants manifest {}: {e}", path.display()))
 }
 
-pub fn harness_path(out: &Path, variant: VariantSlot) -> PathBuf {
-    match variant {
-        VariantSlot::A => out.join(HARNESS_A_FILE),
-        VariantSlot::B => out.join(HARNESS_B_FILE),
-    }
+pub fn predictions_path(out: &Path, label: &str) -> PathBuf {
+    out.join("predictions").join(format!("{label}.jsonl"))
 }
 
-pub fn harness_raw_path(out: &Path, variant: VariantSlot) -> PathBuf {
-    match variant {
-        VariantSlot::A => out.join(HARNESS_RAW_A_FILE),
-        VariantSlot::B => out.join(HARNESS_RAW_B_FILE),
-    }
+pub fn harness_path(out: &Path, label: &str) -> PathBuf {
+    out.join("harness").join(format!("{label}.json"))
+}
+
+pub fn harness_raw_path(out: &Path, label: &str) -> PathBuf {
+    out.join("harness")
+        .join(format!("clawmark__{label}.clawmark-{label}.json"))
 }
 
 /// Write a minimal output directory ready for harness evaluation: empty patches
@@ -216,16 +219,16 @@ pub fn write_minimum_valid_dir(out: &Path) -> Result<(), String> {
     fs::create_dir_all(out.join("harness"))
         .map_err(|e| format!("failed to create harness directory: {e}"))?;
 
-    for variant in [VariantSlot::A, VariantSlot::B] {
+    for label in ["a", "b"] {
         let prediction = SMOKE_INSTANCE_IDS
             .iter()
             .map(|instance_id| SwebenchPrediction {
                 instance_id: (*instance_id).to_string(),
                 model_patch: String::new(),
-                model_name_or_path: variant.model_name_or_path().to_string(),
+                model_name_or_path: format!("clawmark/{label}"),
             })
             .collect::<Vec<_>>();
-        write_predictions_jsonl(&predictions_path(out, variant), &prediction)?;
+        write_predictions_jsonl(&predictions_path(out, label), &prediction)?;
     }
     Ok(())
 }
@@ -233,7 +236,7 @@ pub fn write_minimum_valid_dir(out: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runner::{RunKey, VariantSlot};
+    use crate::runner::{RunKey, VariantId};
     use crate::swebench::Prediction;
 
     #[test]
@@ -278,8 +281,8 @@ mod tests {
 
         assert!(dir.path().join("harness").is_dir());
 
-        for variant in [VariantSlot::A, VariantSlot::B] {
-            let path = predictions_path(dir.path(), variant);
+        for label in ["a", "b"] {
+            let path = predictions_path(dir.path(), label);
             let contents = fs::read_to_string(&path).expect("read predictions");
             let lines: Vec<&str> = contents
                 .lines()
@@ -290,7 +293,7 @@ mod tests {
                 let parsed: SwebenchPrediction =
                     serde_json::from_str(line).expect("parse prediction");
                 assert!(parsed.model_patch.is_empty());
-                assert_eq!(parsed.model_name_or_path, variant.model_name_or_path());
+                assert_eq!(parsed.model_name_or_path, format!("clawmark/{label}"));
             }
         }
     }
@@ -302,7 +305,10 @@ mod tests {
         let record = RunRecord {
             schema_version: SCHEMA_VERSION,
             key: RunKey {
-                variant: VariantSlot::A,
+                variant: VariantId {
+                    index: 0,
+                    label: "a".to_string(),
+                },
                 variant_hash: variant_hash(b"a"),
                 instance_id: "astropy__astropy-12907".to_string(),
             },

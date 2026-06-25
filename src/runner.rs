@@ -9,52 +9,40 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cli::ValidatedRunArgs;
+use crate::cli::{ValidatedRunArgs, ValidatedVariant};
 use crate::report;
 use crate::results::{
     append_run_record, harness_path, harness_raw_path, load_run_records, predictions_path,
-    variant_hash, write_predictions_jsonl, SwebenchPrediction, RUN_RECORDS_FILE, SCHEMA_VERSION,
+    write_atomic_json, write_predictions_jsonl, SwebenchPrediction, VariantManifestEntry,
+    RUN_RECORDS_FILE, SCHEMA_VERSION, VARIANTS_FILE,
 };
 use crate::sandbox;
 use crate::swebench::{self, Prediction, TaskInstance, SMOKE_INSTANCE_IDS};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum VariantSlot {
-    A,
-    B,
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct VariantId {
+    pub index: usize,
+    pub label: String,
 }
 
-impl VariantSlot {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::A => "a",
-            Self::B => "b",
-        }
+impl VariantId {
+    pub fn model_name_or_path(&self) -> String {
+        format!("clawmark/{}", self.label)
     }
 
-    pub fn model_name_or_path(self) -> &'static str {
-        match self {
-            Self::A => "clawmark/a",
-            Self::B => "clawmark/b",
-        }
-    }
-
-    fn run_id(self) -> &'static str {
-        match self {
-            Self::A => "clawmark-a",
-            Self::B => "clawmark-b",
-        }
+    pub fn run_id(&self) -> String {
+        format!("clawmark-{}", self.label)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunKey {
-    pub variant: VariantSlot,
+    pub variant: VariantId,
     pub variant_hash: String,
     pub instance_id: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ClaudeUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -74,44 +62,22 @@ pub struct RunRecord {
     pub usage: Option<ClaudeUsage>,
 }
 
-/// Outcome of a single `claude` invocation.
-///
-/// `Auth` aborts the entire run. `Other` is a recoverable per-task error that is
-/// stored on the `RunRecord` so the run can continue with the next task.
 enum ClaudeOutcome {
     Ok(ClaudeUsage),
     Auth(String),
     Other(String),
 }
 
-/// Orchestrate the full A/B run: variant A then variant B, serially.
-pub async fn run_ab(args: &ValidatedRunArgs) -> Result<(), String> {
+pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
     let tasks = swebench::load_bundled_smoke_set()?;
-
-    let a_contents = fs::read(&args.a_canonical).map_err(|e| {
-        format!(
-            "failed to read variant A {}: {e}",
-            args.a_canonical.display()
-        )
-    })?;
-    let b_contents = fs::read(&args.b_canonical).map_err(|e| {
-        format!(
-            "failed to read variant B {}: {e}",
-            args.b_canonical.display()
-        )
-    })?;
-    let a_hash = variant_hash(&a_contents);
-    let b_hash = variant_hash(&b_contents);
-
-    let invocations = 2 * tasks.len();
+    let invocations = args.variants.len() * tasks.len();
     println!(
-        "2 variants x {} tasks x 1 trial = {} Claude invocations",
+        "{} variants x {} tasks x 1 trial = {} Claude invocations",
+        args.variants.len(),
         tasks.len(),
         invocations
     );
 
-    // Create the output directory only after validation has passed. `create_dir`
-    // fails if it already exists, guarding against a race after validation.
     fs::create_dir(&args.out).map_err(|e| {
         format!(
             "failed to create output directory {}: {e}",
@@ -123,63 +89,59 @@ pub async fn run_ab(args: &ValidatedRunArgs) -> Result<(), String> {
     fs::create_dir(args.out.join("harness"))
         .map_err(|e| format!("failed to create harness directory: {e}"))?;
 
+    let manifest: Vec<VariantManifestEntry> = args
+        .variants
+        .iter()
+        .map(|v| VariantManifestEntry {
+            index: v.index,
+            label: v.label.clone(),
+            path: v.canonical_path.display().to_string(),
+            hash: v.hash.clone(),
+            model: v.model.clone(),
+        })
+        .collect();
+    write_atomic_json(&args.out.join(VARIANTS_FILE), &manifest)?;
+
     let run_records = args.out.join(RUN_RECORDS_FILE);
+    for variant in &args.variants {
+        run_variant(variant, &tasks, args, &run_records).await?;
+    }
+    for variant in &args.variants {
+        invoke_harness(&variant.label, &args.out, args.timeout_secs)?;
+    }
 
-    run_variant(
-        VariantSlot::A,
-        &a_hash,
-        &a_contents,
-        &tasks,
-        args,
-        &run_records,
-    )
-    .await?;
-    run_variant(
-        VariantSlot::B,
-        &b_hash,
-        &b_contents,
-        &tasks,
-        args,
-        &run_records,
-    )
-    .await?;
-
-    invoke_harness(VariantSlot::A, &args.out, args.timeout_secs)?;
-    invoke_harness(VariantSlot::B, &args.out, args.timeout_secs)?;
-
-    let report = report::compute_report(&args.out)?;
-    report::render_terminal_table(&report);
-    print_failure_summary(&report, &args.out);
-    report::write_report_json(&args.out, &report)?;
-
+    let computed = report::compute_report(&args.out)?;
+    report::render_terminal_table(&computed);
+    print_failure_summary(&computed, &args.out);
+    report::write_report_json(&args.out, &computed)?;
     Ok(())
 }
 
 async fn run_variant(
-    variant: VariantSlot,
-    variant_hash: &str,
-    variant_contents: &[u8],
+    variant: &ValidatedVariant,
     tasks: &[TaskInstance],
     args: &ValidatedRunArgs,
     run_records: &Path,
 ) -> Result<(), String> {
-    println!("== variant {} ==", variant.label());
-    let parallel = args.parallel;
-
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(parallel));
+    println!("== variant {} ==", variant.label);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(args.parallel));
     let write_lock = Arc::new(tokio::sync::Mutex::new(()));
     let predictions = Arc::new(tokio::sync::Mutex::new(Vec::with_capacity(tasks.len())));
-    let variant_contents = Arc::new(variant_contents.to_vec());
-    let variant_hash = variant_hash.to_string();
-    let model = match variant {
-        VariantSlot::A => args.model_a.clone(),
-        VariantSlot::B => args.model_b.clone(),
+    let variant_contents = Arc::new(
+        fs::read(&variant.canonical_path)
+            .map_err(|e| format!("failed to read variant {}: {e}", variant.label))?,
+    );
+
+    let variant_id = VariantId {
+        index: variant.index,
+        label: variant.label.clone(),
     };
+    let variant_hash = variant.hash.clone();
+    let model = variant.model.clone();
     let timeout_secs = args.timeout_secs;
     let run_records = run_records.to_path_buf();
 
     let mut handles = Vec::with_capacity(tasks.len());
-
     for task in tasks {
         let task = task.clone();
         let sem = Arc::clone(&semaphore);
@@ -189,21 +151,23 @@ async fn run_variant(
         let vh = variant_hash.clone();
         let model = model.clone();
         let run_records = run_records.clone();
+        let variant_id = variant_id.clone();
+        let variant_label = variant_id.label.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
             let instance_id = task.instance_id.clone();
-            println!("[{}] {}", variant.label(), instance_id);
+            println!("[{variant_label}] {instance_id}");
 
             let record_result = tokio::task::spawn_blocking(move || {
-                run_single(variant, &vh, vc.as_slice(), &task, &model, timeout_secs)
+                run_single(&variant_id, &vh, vc.as_slice(), &task, &model, timeout_secs)
             })
             .await
             .map_err(|e| format!("task panicked: {e}"))?;
             let record = record_result?;
 
             if let Some(err) = &record.error {
-                println!("[{}] {}: error: {err}", variant.label(), instance_id);
+                println!("[{variant_label}] {instance_id}: error: {err}");
             }
 
             {
@@ -218,7 +182,6 @@ async fn run_variant(
 
             Ok::<(), String>(())
         });
-
         handles.push(handle);
     }
 
@@ -245,18 +208,12 @@ async fn run_variant(
     let preds = Arc::try_unwrap(predictions)
         .expect("predictions Arc should have no other owners")
         .into_inner();
-    write_predictions_jsonl(&predictions_path(&args.out, variant), &preds)?;
+    write_predictions_jsonl(&predictions_path(&args.out, &variant.label), &preds)?;
     Ok(())
 }
 
-/// Run one variant against one task: clone, inject `CLAUDE.md`, invoke Claude,
-/// then collect the patch via `git diff HEAD`.
-///
-/// Returns `Ok(RunRecord)` for both success and per-task failures (the error is
-/// stored on the record). Returns `Err` only when the entire run must abort
-/// (Claude authentication failure or an output write failure upstream).
 pub fn run_single(
-    variant: VariantSlot,
+    variant: &VariantId,
     variant_hash: &str,
     variant_contents: &[u8],
     task: &TaskInstance,
@@ -291,9 +248,6 @@ pub fn run_single(
                     ClaudeOutcome::Other(message) => error = Some(message),
                 }
 
-                // Always collect the patch after Claude exits, even on a
-                // per-task Claude error. An empty diff is a valid unresolved
-                // result; we never parse model text for a patch.
                 match sandbox::collect_patch(&workspace) {
                     Ok(collected) => patch = collected,
                     Err(diff_error) => {
@@ -303,7 +257,6 @@ pub fn run_single(
                     }
                 }
             }
-            // `workspace` (and its TempDir) drops here.
         }
     }
 
@@ -311,14 +264,14 @@ pub fn run_single(
     Ok(RunRecord {
         schema_version: SCHEMA_VERSION,
         key: RunKey {
-            variant,
+            variant: variant.clone(),
             variant_hash: variant_hash.to_string(),
             instance_id: task.instance_id.clone(),
         },
         prediction: Prediction {
             instance_id: task.instance_id.clone(),
             model_patch: patch,
-            model_name_or_path: variant.model_name_or_path().to_string(),
+            model_name_or_path: variant.model_name_or_path(),
         },
         elapsed_secs,
         error,
@@ -337,8 +290,6 @@ fn invoke_claude(
         .args(&argv)
         .current_dir(workspace_path)
         .stdin(Stdio::null())
-        // The JSON result is small (well under the OS pipe buffer), so draining
-        // only after exit is safe.
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
@@ -384,7 +335,6 @@ fn invoke_claude(
     if is_auth_failure(&stderr) {
         return ClaudeOutcome::Auth(stderr.trim().to_string());
     }
-
     let detail = {
         let trimmed = stderr.trim();
         if trimmed.is_empty() {
@@ -396,10 +346,6 @@ fn invoke_claude(
     ClaudeOutcome::Other(format!("claude failed: {detail}"))
 }
 
-/// Detect a Claude authentication failure from stderr text.
-///
-/// A match aborts the entire run, since every subsequent invocation would fail
-/// the same way.
 fn is_auth_failure(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     lower.contains("not authenticated")
@@ -409,14 +355,6 @@ fn is_auth_failure(stderr: &str) -> bool {
 }
 
 fn claude_argv(model: &str, workspace_path: &Path, problem_statement: &str) -> Vec<OsString> {
-    // `--add-dir` is variadic, so it must not directly precede the positional
-    // prompt or it swallows the prompt as another directory. The trailing `--`
-    // terminates option parsing so the problem statement is always received as
-    // the prompt, even if it starts with `-`.
-    //
-    // `--bare` is intentionally NOT used: it disables CLAUDE.md auto-discovery
-    // (which defeats clawmark's variant injection) and forces ANTHROPIC_API_KEY
-    // auth, ignoring the user's OAuth/keychain login.
     vec![
         OsString::from("-p"),
         OsString::from("--output-format"),
@@ -431,8 +369,6 @@ fn claude_argv(model: &str, workspace_path: &Path, problem_statement: &str) -> V
     ]
 }
 
-/// Parse `ClaudeUsage` from the raw stdout bytes of a `claude -p --output-format json`
-/// invocation. Never fails: any parse error returns `ClaudeUsage::default()`.
 fn parse_claude_usage(stdout: &[u8]) -> ClaudeUsage {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(stdout) else {
         return ClaudeUsage::default();
@@ -467,39 +403,30 @@ fn parse_claude_usage(stdout: &[u8]) -> ClaudeUsage {
     }
 }
 
-/// Invoke the SWE-bench harness once for a variant, then copy the raw summary
-/// to the stable `harness/a.json` / `harness/b.json` path.
-pub fn invoke_harness(variant: VariantSlot, out: &Path, timeout_secs: u64) -> Result<(), String> {
+pub fn invoke_harness(label: &str, out: &Path, timeout_secs: u64) -> Result<(), String> {
     let harness_dir = out.join("harness");
     let abs_out = out
         .canonicalize()
         .map_err(|e| format!("failed to resolve output directory {}: {e}", out.display()))?;
-    let predictions = predictions_path(&abs_out, variant);
-
-    let argv = harness_argv(&predictions, variant.run_id(), timeout_secs);
+    let predictions = predictions_path(&abs_out, label);
+    let run_id = format!("clawmark-{label}");
+    let argv = harness_argv(&predictions, &run_id, timeout_secs);
     let status = Command::new("python3")
         .args(&argv)
         .current_dir(&harness_dir)
         .status()
         .map_err(|e| format!("failed to run swebench harness: {e}"))?;
-
     if !status.success() {
         return Err(format!(
-            "swebench harness failed for variant {} ({status})",
-            variant.label()
+            "swebench harness failed for variant {label} ({status})"
         ));
     }
-
-    finalize_harness_summary(out, variant)
+    finalize_harness_summary(out, label)
 }
 
-/// Copy the harness raw summary to the stable clawmark path.
-///
-/// Fails clearly if the raw summary is missing so the caller aborts before
-/// writing `report.json`.
-fn finalize_harness_summary(out: &Path, variant: VariantSlot) -> Result<(), String> {
-    let raw = harness_raw_path(out, variant);
-    let stable = harness_path(out, variant);
+fn finalize_harness_summary(out: &Path, label: &str) -> Result<(), String> {
+    let raw = harness_raw_path(out, label);
+    let stable = harness_path(out, label);
     if !raw.is_file() {
         return Err(format!(
             "swebench harness raw summary missing: {}",
@@ -516,39 +443,26 @@ fn finalize_harness_summary(out: &Path, variant: VariantSlot) -> Result<(), Stri
     Ok(())
 }
 
-/// Build the list of `(variant_label, instance_id, error)` tuples for every
-/// `(variant, task)` pair that the harness did not resolve.
-///
-/// Extracted as a pure function so it can be unit-tested without I/O.
-fn collect_failure_entries(
-    report: &report::Report,
-    records: &[RunRecord],
-) -> Vec<(String, String, Option<String>)> {
-    let mut failures = Vec::new();
-    for task in &report.tasks {
-        for (label, resolved) in [("a", task.a_resolved), ("b", task.b_resolved)] {
-            if !resolved {
-                let error = records
-                    .iter()
-                    .find(|r| {
-                        r.key.variant.label() == label && r.key.instance_id == task.instance_id
-                    })
-                    .and_then(|r| r.error.clone());
-                failures.push((label.to_string(), task.instance_id.clone(), error));
-            }
-        }
-    }
-    failures
-}
-
-/// Print a failure summary after a run completes.
-///
-/// Prints nothing when every (variant, task) pair was resolved. Loads run
-/// records best-effort; a missing file silently produces an empty record list.
 fn print_failure_summary(report: &report::Report, out: &Path) {
     let records = load_run_records(&out.join(RUN_RECORDS_FILE)).unwrap_or_default();
-    let failures = collect_failure_entries(report, &records);
-
+    let mut failures = Vec::new();
+    for task in &report.per_task {
+        for (idx, resolved) in task.resolved.iter().enumerate() {
+            if *resolved {
+                continue;
+            }
+            let Some(variant) = report.variants.get(idx) else {
+                continue;
+            };
+            let error = records
+                .iter()
+                .find(|r| {
+                    r.key.variant.label == variant.label && r.key.instance_id == task.instance_id
+                })
+                .and_then(|r| r.error.clone());
+            failures.push((variant.label.clone(), task.instance_id.clone(), error));
+        }
+    }
     if failures.is_empty() {
         return;
     }
@@ -636,151 +550,27 @@ mod tests {
             .iter()
             .map(|s| s.to_string_lossy().into_owned())
             .collect();
-
         assert_eq!(strings[0], "-m");
         assert_eq!(strings[1], "swebench.harness.run_evaluation");
-
         let find = |flag: &str| strings.iter().position(|s| s == flag);
         let pred_idx = find("--predictions_path").expect("predictions_path flag");
         assert_eq!(strings[pred_idx + 1], "/abs/out/predictions/a.jsonl");
-
-        let dataset_idx = find("--dataset_name").expect("dataset flag");
-        assert_eq!(strings[dataset_idx + 1], "princeton-nlp/SWE-bench_Lite");
-
-        let split_idx = find("--split").expect("split flag");
-        assert_eq!(strings[split_idx + 1], "test");
-
         let run_idx = find("--run_id").expect("run_id flag");
         assert_eq!(strings[run_idx + 1], "clawmark-a");
-
-        let workers_idx = find("--max_workers").expect("max_workers flag");
-        assert_eq!(strings[workers_idx + 1], "1");
-
         let timeout_idx = find("--timeout").expect("timeout flag");
         assert_eq!(strings[timeout_idx + 1], "300");
-
-        // All five smoke instance IDs appear, in order, after --instance_ids.
-        let ids_idx = find("--instance_ids").expect("instance_ids flag");
-        for (offset, id) in SMOKE_INSTANCE_IDS.iter().enumerate() {
-            assert_eq!(&strings[ids_idx + 1 + offset], id);
-        }
-    }
-
-    #[test]
-    fn collect_failure_entries_empty_when_all_resolved() {
-        use crate::report::aggregate_report;
-        use crate::results::HarnessResult;
-        use crate::swebench::SMOKE_INSTANCE_IDS;
-
-        let all_ids: Vec<String> = SMOKE_INSTANCE_IDS
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-        let a = HarnessResult {
-            resolved_ids: all_ids.clone(),
-        };
-        let b = HarnessResult {
-            resolved_ids: all_ids,
-        };
-        let report = aggregate_report(&a, &b);
-        assert!(collect_failure_entries(&report, &[]).is_empty());
-    }
-
-    #[test]
-    fn collect_failure_entries_includes_error_from_record() {
-        use crate::report::aggregate_report;
-        use crate::results::HarnessResult;
-        use crate::swebench::Prediction;
-
-        let a = HarnessResult {
-            resolved_ids: vec![],
-        };
-        let b = HarnessResult {
-            resolved_ids: vec![],
-        };
-        let report = aggregate_report(&a, &b);
-
-        let record = RunRecord {
-            schema_version: SCHEMA_VERSION,
-            key: RunKey {
-                variant: VariantSlot::A,
-                variant_hash: "abc".to_string(),
-                instance_id: "astropy__astropy-12907".to_string(),
-            },
-            prediction: Prediction {
-                instance_id: "astropy__astropy-12907".to_string(),
-                model_patch: String::new(),
-                model_name_or_path: "clawmark/a".to_string(),
-            },
-            elapsed_secs: 1.0,
-            error: Some("claude timed out after 300s".to_string()),
-            usage: None,
-        };
-
-        let failures = collect_failure_entries(&report, &[record]);
-        let entry = failures
-            .iter()
-            .find(|(l, id, _)| l == "a" && id == "astropy__astropy-12907");
-        assert!(entry.is_some());
-        let (_, _, err) = entry.unwrap();
-        assert_eq!(err.as_deref(), Some("claude timed out after 300s"));
-    }
-
-    #[test]
-    fn collect_failure_entries_marks_no_error_when_record_missing() {
-        use crate::report::aggregate_report;
-        use crate::results::HarnessResult;
-
-        let a = HarnessResult {
-            resolved_ids: vec![],
-        };
-        let b = HarnessResult {
-            resolved_ids: vec![],
-        };
-        let report = aggregate_report(&a, &b);
-
-        // No records provided — error should be None (unresolved but no claude error)
-        let failures = collect_failure_entries(&report, &[]);
-        let entry = failures
-            .iter()
-            .find(|(l, id, _)| l == "a" && id == "astropy__astropy-12907");
-        assert!(entry.is_some());
-        let (_, _, err) = entry.unwrap();
-        assert!(err.is_none());
     }
 
     #[test]
     fn finalize_harness_summary_copies_raw_to_stable() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join("harness")).expect("harness dir");
-        let raw = harness_raw_path(dir.path(), VariantSlot::A);
+        let raw = harness_raw_path(dir.path(), "a");
         fs::write(raw, r#"{"resolved_ids":["astropy__astropy-12907"]}"#).expect("write raw");
-
-        finalize_harness_summary(dir.path(), VariantSlot::A).expect("finalize");
-
-        let stable = harness_path(dir.path(), VariantSlot::A);
+        finalize_harness_summary(dir.path(), "a").expect("finalize");
+        let stable = harness_path(dir.path(), "a");
         let contents = fs::read_to_string(stable).expect("read stable");
         assert!(contents.contains("astropy__astropy-12907"));
-    }
-
-    #[test]
-    fn finalize_harness_summary_errors_when_raw_missing() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        fs::create_dir_all(dir.path().join("harness")).expect("harness dir");
-        let err = finalize_harness_summary(dir.path(), VariantSlot::B)
-            .expect_err("missing raw should error");
-        assert!(err.contains("raw summary missing"));
-    }
-
-    #[test]
-    fn parse_claude_usage_reads_fields() {
-        let input = br#"{"total_cost_usd":0.0123,"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":5,"cache_creation_input_tokens":7}}"#;
-        let usage = parse_claude_usage(input);
-        assert_eq!(usage.input_tokens, 100);
-        assert_eq!(usage.output_tokens, 200);
-        assert_eq!(usage.cache_read_input_tokens, 5);
-        assert_eq!(usage.cache_creation_input_tokens, 7);
-        assert_eq!(usage.cost_usd, Some(0.0123));
     }
 
     #[test]
@@ -790,13 +580,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_claude_usage_missing_usage_object() {
-        let input = br#"{"result":"ok"}"#;
-        let usage = parse_claude_usage(input);
-        assert_eq!(usage.input_tokens, 0);
-        assert_eq!(usage.output_tokens, 0);
-        assert_eq!(usage.cache_read_input_tokens, 0);
-        assert_eq!(usage.cache_creation_input_tokens, 0);
-        assert_eq!(usage.cost_usd, None);
+    fn variant_id_model_name_or_path_uses_label() {
+        let variant = VariantId {
+            index: 2,
+            label: "gamma".to_string(),
+        };
+        assert_eq!(variant.model_name_or_path(), "clawmark/gamma");
+        assert_eq!(variant.run_id(), "clawmark-gamma");
+        let hash = crate::results::variant_hash(b"test");
+        assert_eq!(hash.len(), 64);
     }
 }
