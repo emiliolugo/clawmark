@@ -50,13 +50,19 @@ pub fn create(task: &TaskInstance) -> Result<Workspace, String> {
     })
 }
 
-/// Write the variant file contents as `CLAUDE.md` at the root of the cloned repo.
+/// Write the variant file contents as both `CLAUDE.md` and `AGENTS.md` at the
+/// root of the cloned repo.
 ///
-/// Uses `std::fs::write`, never a subprocess.
-pub fn inject_claude_md(workspace: &Workspace, variant_contents: &[u8]) -> Result<(), String> {
-    let target = workspace.path.join("CLAUDE.md");
-    std::fs::write(&target, variant_contents)
-        .map_err(|e| format!("failed to write {}: {e}", target.display()))
+/// Both files receive identical contents so the A/B comparison stays fair
+/// regardless of which agent backend runs: Claude reads `CLAUDE.md`, Cursor
+/// reads `AGENTS.md`. Uses `std::fs::write`, never a subprocess.
+pub fn inject_variant(workspace: &Workspace, variant_contents: &[u8]) -> Result<(), String> {
+    for filename in ["CLAUDE.md", "AGENTS.md"] {
+        let target = workspace.path.join(filename);
+        std::fs::write(&target, variant_contents)
+            .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
+    }
+    Ok(())
 }
 
 /// Collect the ground-truth patch via `git diff HEAD`.
@@ -158,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn inject_claude_md_writes_file_in_repo() {
+    fn inject_variant_writes_both_files_in_repo() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let repo = temp_dir.path().join("repo");
         std::fs::create_dir(&repo).expect("repo dir");
@@ -166,8 +172,10 @@ mod tests {
             _temp_dir: temp_dir,
             path: repo.clone(),
         };
-        inject_claude_md(&workspace, b"variant contents").expect("inject");
-        let read = std::fs::read(repo.join("CLAUDE.md")).expect("read");
-        assert_eq!(read, b"variant contents");
+        inject_variant(&workspace, b"variant contents").expect("inject");
+        for filename in ["CLAUDE.md", "AGENTS.md"] {
+            let read = std::fs::read(repo.join(filename)).expect("read");
+            assert_eq!(read, b"variant contents");
+        }
     }
 }

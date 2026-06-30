@@ -4,7 +4,7 @@
 
 > Which of these two `CLAUDE.md` files performs better on a small SWE-bench Lite smoke set?
 
-v1 compares exactly two local variant files against five bundled SWE-bench Lite tasks. It runs Claude locally, evaluates the generated patches with the official SWE-bench harness in Docker, and writes a simple A/B report.
+v1 compares exactly two local variant files against five bundled SWE-bench Lite tasks. It runs a local coding agent (`claude` or `cursor`) per variant, evaluates the generated patches with the official SWE-bench harness in Docker, and writes a simple A/B report.
 
 ## What Ships In v1
 
@@ -21,7 +21,8 @@ Install these yourself before running `clawmark`:
 | Dependency | Required version | Notes |
 |---|---:|---|
 | Rust | stable, MSRV 1.79 | Used to build this CLI |
-| Claude CLI | >= 1.0.0 | Must be installed, on `PATH`, and authenticated |
+| Claude CLI | >= 1.0.0 | Required for the `claude` backend: on `PATH` and authenticated |
+| Cursor CLI | latest | Required for the `cursor` backend: `cursor-agent` on `PATH`, authenticated via `cursor-agent login` or `CURSOR_API_KEY` |
 | Docker | >= 24.0 | Required by the SWE-bench harness |
 | Python | 3.11+ | Required by `swebench` |
 | swebench | latest | Install into the `python3` on your `PATH` with `python3 -m pip install --upgrade swebench` |
@@ -33,7 +34,7 @@ Check your machine:
 cargo run -- doctor
 ```
 
-`doctor` prints a status table and exits non-zero if a required check fails. A missing SWE-bench Docker image is only a warning; the first evaluation may pull it.
+`doctor` prints a status table and exits non-zero if a required check fails. Missing or unauthenticated Claude/Cursor CLIs are warnings only — you need the backend selected for your run, not both. A missing SWE-bench Docker image is also a warning; the first evaluation may pull it.
 
 ## Quickstart
 
@@ -70,15 +71,29 @@ cargo run -- run \
 
 In this example, A uses `sonnet` (the shared default) and B uses `haiku`. Both `--model-a` and `--model-b` are optional; omitting either causes that variant to use `--model`.
 
+To run variant A with Claude and variant B with Cursor:
+
+```sh
+cargo run -- run \
+  --a variants/a.md \
+  --b variants/b.md \
+  --model sonnet \
+  --agent-b cursor \
+  --timeout-secs 300 \
+  --out out
+```
+
+Use `--agent` as the shared default backend, or `--agent-a` / `--agent-b` to override per variant. Omit all agent flags to default to `claude`. With the N-variant form, set backends via repeated `--variant-agent <label>=<backend>` (defaults to `claude` when omitted).
+
 This performs:
 
 ```text
-2 variants x 5 tasks x 1 trial = 10 Claude invocations
+2 variants x 5 tasks x 1 trial = 10 agent invocations
 ```
 
 `run` creates a fresh output directory. It fails if `--out` already exists, so use a new directory for each run.
 
-To run up to N Claude invocations concurrently within each variant pass, add `--parallel N`:
+To run up to N agent invocations concurrently within each variant pass, add `--parallel N`:
 
 ```sh
 cargo run -- run \
@@ -104,7 +119,7 @@ To also display each task's model patch (truncated to 20 lines):
 cargo run -- report --out out --show-patches
 ```
 
-The report prints resolved counts, A/B win/loss/tie counts, and per-variant wall-clock time, input tokens, output tokens, and estimated USD cost (shown as `n/a` when the Claude CLI did not provide cost data).
+The report prints resolved counts, A/B win/loss/tie counts, and per-variant wall-clock time, input tokens, output tokens, and estimated USD cost. Token and cost totals show `n/a` when the agent CLI did not provide them (always for the `cursor` backend).
 
 ```sh
 cargo build --release
@@ -115,9 +130,9 @@ cargo build --release
 
 ## Runtime And Budget Warnings
 
-v1 is intentionally minimal and does not enforce a turn limit, token budget, retry policy, or per-task cost cap. `--timeout-secs` is only a wall-clock timeout around each Claude invocation. A broad `CLAUDE.md` can spend the full timeout exploring the repo, installing dependencies, or running tests without producing a patch.
+v1 is intentionally minimal and does not enforce a turn limit, token budget, retry policy, or per-task cost cap. `--timeout-secs` is only a wall-clock timeout around each agent invocation. A broad variant file can spend the full timeout exploring the repo, installing dependencies, or running tests without producing a patch.
 
-`clawmark report` now shows per-variant totals for wall-clock time, input tokens, output tokens, and estimated USD cost. This is reporting only — clawmark does not enforce or cap any of these values.
+`clawmark report` shows per-variant totals for wall-clock time, input tokens, output tokens, and estimated USD cost. This is reporting only — clawmark does not enforce or cap any of these values. Cursor runs never report token or cost data.
 
 For first e2e runs, use strict benchmark-oriented variants:
 
@@ -135,12 +150,12 @@ Rules:
 Recommended starting settings:
 
 - Use `--timeout-secs 600` for a bounded smoke test.
-- Use `--timeout-secs 1800` only when you want to give Claude enough time to solve harder tasks.
+- Use `--timeout-secs 1800` only when you want to give the agent enough time to solve harder tasks.
 - Use a fresh `--out` directory for every attempt.
-- Run `cargo run -- doctor` first so failures happen before any Claude calls.
+- Run `cargo run -- doctor` first so failures happen before any agent calls.
 - Watch the first task before walking away; if it reaches the timeout with an empty patch, tighten your variant instructions before running all 10 invocations.
 
-Budget expectation varies heavily by model behavior. The v1 smoke run performs 10 Claude invocations, so open-ended variants can consume materially more time and usage quota than short, patch-focused variants.
+Budget expectation varies heavily by model behavior. The v1 smoke run performs 10 agent invocations, so open-ended variants can consume materially more time and usage quota than short, patch-focused variants.
 
 ## How Runs Work
 
@@ -148,8 +163,8 @@ For each task and variant, `clawmark`:
 
 1. Clones the SWE-bench target repository into a temporary workspace.
 2. Checks out the task's base commit.
-3. Writes the selected variant file as `CLAUDE.md` at the repo root.
-4. Invokes Claude with the task problem statement.
+3. Writes the selected variant file as both `CLAUDE.md` and `AGENTS.md` at the repo root (same contents; Claude reads the former, Cursor reads the latter).
+4. Invokes the selected agent backend with the task problem statement.
 5. Captures `git diff HEAD` as the model patch.
 
 Claude is invoked locally with:
@@ -157,6 +172,14 @@ Claude is invoked locally with:
 ```sh
 claude -p --output-format json --dangerously-skip-permissions --model <model> --add-dir <workspace> -- <problem_statement>
 ```
+
+Cursor is invoked locally with:
+
+```sh
+cursor-agent -p --output-format json --force --trust --model <model> <problem_statement>
+```
+
+The Cursor command runs with the cloned repo as its working directory.
 
 After all predictions are written for a variant, `clawmark` invokes the SWE-bench harness once for A and once for B. The report treats the harness `resolved_ids` arrays as the source of truth.
 
@@ -168,31 +191,34 @@ When any (variant, task) pair fails to resolve, `clawmark run` prints a failure 
 clawmark doctor
 ```
 
-Checks Docker, Claude CLI, Claude authentication, Python, `swebench`, the SWE-bench harness CLI, git, Docker Hub registry reachability, and whether the SWE-bench Docker image is already present.
+Checks Docker, Python, `swebench`, the SWE-bench harness CLI, git, Docker Hub registry reachability, and whether the SWE-bench Docker image is already present. Also checks Claude and Cursor CLIs (present and authenticated); those are warnings, not failures, since only the backend you select for a run is required.
 
 ```sh
-clawmark run --a <path> --b <path> --model <model> [--model-a <model>] [--model-b <model>] --timeout-secs <seconds> --out <dir> [--parallel N]
+clawmark run --a <path> --b <path> --model <model> [--model-a <model>] [--model-b <model>] [--agent <backend>] [--agent-a <backend>] [--agent-b <backend>] --timeout-secs <seconds> --out <dir> [--parallel N]
 ```
 
-Runs the fixed five-task A/B benchmark. `--model` is the shared default model for both variants. `--model-a` and `--model-b` are optional overrides; if given, they replace `--model` for that variant only. `--timeout-secs` must be between `1` and `86400`; it applies to each Claude invocation and is also passed to the SWE-bench harness. `--parallel N` (default: `1`) allows up to N Claude invocations to run concurrently within each variant pass. The SWE-bench harness is always invoked serially, once per variant.
+Runs the fixed five-task A/B benchmark. `--model` is the shared default model for both variants. `--model-a` and `--model-b` are optional overrides; if given, they replace `--model` for that variant only. `--agent` is the shared default agent backend (`claude` or `cursor`); `--agent-a` and `--agent-b` override it per variant (default: `claude`). `--timeout-secs` must be between `1` and `86400`; it applies to each agent invocation and is also passed to the SWE-bench harness. `--parallel N` (default: `1`) allows up to N agent invocations to run concurrently within each variant pass. The SWE-bench harness is always invoked serially, once per variant.
+
+For more than two variants, use repeated `--variant <label>=<path>`, `--variant-model <label>=<model>`, and optional `--variant-agent <label>=<backend>` instead of the `--a`/`--b` alias flags.
 
 ```sh
 clawmark report --out <dir> [--show-patches]
 ```
 
-Reads existing harness output, prints resolved counts, A wins, B wins, both-resolved ties, and both-failed ties, and per-variant totals for wall-clock time, input tokens, output tokens, and estimated USD cost (shown as `n/a` when unavailable), then writes `report.json`. With `--show-patches`, also prints each task's model patch truncated to 20 lines.
+Reads existing harness output, prints resolved counts, A wins, B wins, both-resolved ties, and both-failed ties, and per-variant totals for wall-clock time, input tokens, output tokens, and estimated USD cost (shown as `n/a` when unavailable, including all Cursor runs), then writes `report.json`. With `--show-patches`, also prints each task's model patch truncated to 20 lines.
 
 ## Input Rules
 
 - `--a` and `--b` must exist and be regular files after symlink resolution.
 - Both variant paths must be inside the process current working directory.
 - A and B must resolve to different canonical files.
-- `--model` must be a non-empty string and is passed as one argument to `claude --model`. It is the shared default for both variants.
+- `--model` must be a non-empty string and is passed to the selected agent CLI. It is the shared default for both variants.
 - `--model-a` and `--model-b` are optional. When given, each must be a non-empty string and overrides `--model` for that variant only.
+- `--agent`, `--agent-a`, and `--agent-b` are optional. Values must be `claude` or `cursor`. When omitted, the backend defaults to `claude`. With the N-variant form, `--variant-agent <label>=<backend>` sets the backend per label (also defaults to `claude`).
 - `run --out` requires an existing parent directory and a destination that does not already exist.
 - `report --out` requires an existing output directory with harness results.
 
-Variant filenames do not need to be `CLAUDE.md`; their contents are injected as `CLAUDE.md` inside each temporary task workspace.
+Variant filenames do not need to be `CLAUDE.md`; their contents are injected as both `CLAUDE.md` and `AGENTS.md` inside each temporary task workspace.
 
 ## Output Layout
 
@@ -217,18 +243,18 @@ All clawmark-owned records include `schema_version: 2`.
 Most per-task failures are recorded and the run continues with an empty patch for that task:
 
 - git clone or checkout failure
-- Claude non-auth failure
-- Claude timeout
+- agent non-auth failure (other errors are recorded per task)
+- agent timeout
 - model unavailable or rate limit errors
 - empty `git diff HEAD`
 
-Claude authentication failures abort the whole run. Harness failures abort before `report.json` is written, but already-written predictions remain in the output directory for inspection.
+Agent authentication failures abort the whole run. Harness failures abort before `report.json` is written, but already-written predictions remain in the output directory for inspection.
 
 ## Security Model
 
 `clawmark` is a local developer tool for user-controlled inputs.
 
-Claude runs on the host, not in a container. The command uses `--dangerously-skip-permissions`, and variant instructions are not OS-sandboxed. Do not run untrusted `CLAUDE.md` variants, untrusted benchmark data, or untrusted prompts through v1.
+Agents run on the host, not in a container. Claude uses `--dangerously-skip-permissions`; variant instructions are not OS-sandboxed. Do not run untrusted variant files, untrusted benchmark data, or untrusted prompts through v1.
 
 SWE-bench test execution runs inside Docker through the official harness. The model-generated patch is evaluated by the harness; `clawmark` does not execute the patch directly on the host.
 
@@ -236,13 +262,13 @@ SWE-bench test execution runs inside Docker through the official harness. The mo
 
 ## Troubleshooting
 
-- **`No instances to run.`** — The harness filters out empty predictions. This almost always means Claude produced no patch (often from too small a `--timeout-secs`). Use a generous timeout (e.g. `--timeout-secs 600`) and a fresh `--out` directory, then inspect `run_records.jsonl` to confirm patches are non-empty.
+- **`No instances to run.`** — The harness filters out empty predictions. This almost always means the agent produced no patch (often from too small a `--timeout-secs`). Use a generous timeout (e.g. `--timeout-secs 600`) and a fresh `--out` directory, then inspect `run_records.jsonl` to confirm patches are non-empty.
 - **`lookup registry-1.docker.io: no such host` / Docker image pull errors** — Docker cannot resolve Docker Hub, so the harness cannot pull SWE-bench images. `clawmark doctor` flags this with the "Docker registry reachable" check. Fix your network/VPN and Docker Desktop DNS settings, then retry. This is an environment issue, not a clawmark bug.
 - **Hugging Face `404` lines during dataset load** — These are normal probes the `datasets` library makes for optional files (e.g. `SWE-bench_Lite.py`, `dataset_infos.json`). They are not errors and do not affect the run.
 
 ## Telemetry
 
-`clawmark` does not send telemetry or usage data. Claude and SWE-bench may perform their own network activity as part of their normal operation.
+`clawmark` does not send telemetry or usage data. Agent CLIs and SWE-bench may perform their own network activity as part of their normal operation.
 
 ## Contributing
 

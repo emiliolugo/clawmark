@@ -4,9 +4,39 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 
 pub const MIN_TIMEOUT_SECS: u64 = 1;
 pub const MAX_TIMEOUT_SECS: u64 = 86_400;
+
+/// The coding-agent CLI used to attempt a task. Defaults to Claude to preserve
+/// the original behavior; Cursor uses the `cursor-agent` CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentBackend {
+    #[default]
+    Claude,
+    Cursor,
+}
+
+impl AgentBackend {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "claude" => Ok(Self::Claude),
+            "cursor" => Ok(Self::Cursor),
+            other => Err(format!(
+                "unknown agent backend {other:?}; expected 'claude' or 'cursor'"
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Cursor => "cursor",
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -45,12 +75,24 @@ pub struct RunArgs {
     /// Alias form override for variant B.
     #[arg(long)]
     pub model_b: Option<String>,
+    /// Alias form shared agent backend (claude|cursor) for two-variant runs only.
+    #[arg(long)]
+    pub agent: Option<String>,
+    /// Alias form agent backend override for variant A (claude|cursor).
+    #[arg(long)]
+    pub agent_a: Option<String>,
+    /// Alias form agent backend override for variant B (claude|cursor).
+    #[arg(long)]
+    pub agent_b: Option<String>,
     /// Variant definition in the form <label>=<path>. Repeatable.
     #[arg(long = "variant")]
     pub variants: Vec<String>,
     /// Variant model override in the form <label>=<model>. Repeatable.
     #[arg(long = "variant-model")]
     pub variant_models: Vec<String>,
+    /// Variant agent backend in the form <label>=<backend> (claude|cursor). Repeatable.
+    #[arg(long = "variant-agent")]
+    pub variant_agents: Vec<String>,
     #[arg(long)]
     pub timeout_secs: u64,
     #[arg(long)]
@@ -82,6 +124,7 @@ pub struct ValidatedVariant {
     pub label: String,
     pub canonical_path: PathBuf,
     pub model: String,
+    pub agent: AgentBackend,
     pub hash: String,
 }
 
@@ -97,12 +140,17 @@ impl RunArgs {
             || self.b.is_some()
             || self.model.is_some()
             || self.model_a.is_some()
-            || self.model_b.is_some();
-        let using_variant_form = !self.variants.is_empty() || !self.variant_models.is_empty();
+            || self.model_b.is_some()
+            || self.agent.is_some()
+            || self.agent_a.is_some()
+            || self.agent_b.is_some();
+        let using_variant_form = !self.variants.is_empty()
+            || !self.variant_models.is_empty()
+            || !self.variant_agents.is_empty();
 
         if using_ab_form == using_variant_form {
             return Err(
-                "choose exactly one input form: either --a/--b/--model (with optional --model-a/--model-b) or repeated --variant/--variant-model"
+                "choose exactly one input form: either --a/--b/--model (with optional --model-a/--model-b/--agent/--agent-a/--agent-b) or repeated --variant/--variant-model/--variant-agent"
                     .to_string(),
             );
         }
@@ -160,12 +208,26 @@ impl RunArgs {
             return Err("--model must be a non-empty string".to_string());
         }
 
+        let default_agent = match &self.agent {
+            Some(value) => AgentBackend::parse(value)?,
+            None => AgentBackend::default(),
+        };
+        let agent_a = match &self.agent_a {
+            Some(value) => AgentBackend::parse(value)?,
+            None => default_agent,
+        };
+        let agent_b = match &self.agent_b {
+            Some(value) => AgentBackend::parse(value)?,
+            None => default_agent,
+        };
+
         Ok(vec![
             ValidatedVariant {
                 index: 0,
                 label: "a".to_string(),
                 canonical_path: a_canonical.clone(),
                 model: model_a.to_string(),
+                agent: agent_a,
                 hash: compute_variant_hash(&a_canonical)?,
             },
             ValidatedVariant {
@@ -173,6 +235,7 @@ impl RunArgs {
                 label: "b".to_string(),
                 canonical_path: b_canonical.clone(),
                 model: model_b.to_string(),
+                agent: agent_b,
                 hash: compute_variant_hash(&b_canonical)?,
             },
         ])
@@ -184,9 +247,12 @@ impl RunArgs {
             || self.model.is_some()
             || self.model_a.is_some()
             || self.model_b.is_some()
+            || self.agent.is_some()
+            || self.agent_a.is_some()
+            || self.agent_b.is_some()
         {
             return Err(
-                "--a/--b/--model/--model-a/--model-b cannot be combined with --variant/--variant-model"
+                "--a/--b/--model/--model-a/--model-b/--agent/--agent-a/--agent-b cannot be combined with --variant/--variant-model/--variant-agent"
                     .to_string(),
             );
         }
@@ -195,6 +261,7 @@ impl RunArgs {
         }
 
         let model_map = parse_variant_models(&self.variant_models)?;
+        let agent_map = parse_variant_agents(&self.variant_agents)?;
         let mut seen_labels = HashSet::new();
         let mut seen_paths: HashSet<PathBuf> = HashSet::new();
         let mut variants = Vec::with_capacity(self.variants.len());
@@ -223,11 +290,14 @@ impl RunArgs {
                 return Err(format!("model for variant {label} must be non-empty"));
             }
 
+            let agent = agent_map.get(&label).copied().unwrap_or_default();
+
             variants.push(ValidatedVariant {
                 index,
                 label,
                 canonical_path: canonical_path.clone(),
                 model: model.trim().to_string(),
+                agent,
                 hash: compute_variant_hash(&canonical_path)?,
             });
         }
@@ -236,6 +306,14 @@ impl RunArgs {
             if !variants.iter().any(|v| &v.label == label) {
                 return Err(format!(
                     "--variant-model provided for unknown variant label: {label}"
+                ));
+            }
+        }
+
+        for label in agent_map.keys() {
+            if !variants.iter().any(|v| &v.label == label) {
+                return Err(format!(
+                    "--variant-agent provided for unknown variant label: {label}"
                 ));
             }
         }
@@ -337,6 +415,21 @@ fn parse_variant_models(raw: &[String]) -> Result<HashMap<String, String>, Strin
     Ok(map)
 }
 
+fn parse_variant_agents(raw: &[String]) -> Result<HashMap<String, AgentBackend>, String> {
+    let mut map = HashMap::new();
+    for item in raw {
+        let (label, backend) = parse_label_equals_value(item, "--variant-agent", "backend")?;
+        validate_variant_label(&label)?;
+        let backend = AgentBackend::parse(&backend)?;
+        if map.insert(label.clone(), backend).is_some() {
+            return Err(format!(
+                "duplicate --variant-agent entry for label: {label}"
+            ));
+        }
+    }
+    Ok(map)
+}
+
 fn validate_variant_label(label: &str) -> Result<(), String> {
     let mut chars = label.chars();
     let Some(first) = chars.next() else {
@@ -378,8 +471,12 @@ mod tests {
             model: Some("sonnet".to_string()),
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: Vec::new(),
             variant_models: Vec::new(),
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.join(out_name),
             parallel: None,
@@ -445,8 +542,12 @@ mod tests {
             model: Some("   ".to_string()),
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: Vec::new(),
             variant_models: Vec::new(),
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -468,8 +569,12 @@ mod tests {
             model: Some("sonnet".to_string()),
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: Vec::new(),
             variant_models: Vec::new(),
+            variant_agents: Vec::new(),
             timeout_secs: 0,
             out: dir.path().join("out"),
             parallel: None,
@@ -512,8 +617,12 @@ mod tests {
             model: Some("sonnet".to_string()),
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: Vec::new(),
             variant_models: Vec::new(),
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: Some(0),
@@ -535,8 +644,12 @@ mod tests {
             model: Some("sonnet".to_string()),
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: Vec::new(),
             variant_models: Vec::new(),
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: Some(1),
@@ -556,8 +669,12 @@ mod tests {
             model: Some("sonnet".to_string()),
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: Vec::new(),
             variant_models: Vec::new(),
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -580,8 +697,12 @@ mod tests {
             model: Some("sonnet".to_string()),
             model_a: None,
             model_b: Some("haiku".to_string()),
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: Vec::new(),
             variant_models: Vec::new(),
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -591,6 +712,105 @@ mod tests {
             .expect("validation should succeed");
         assert_eq!(validated.variants[0].model, "sonnet");
         assert_eq!(validated.variants[1].model, "haiku");
+    }
+
+    #[test]
+    fn run_defaults_agent_to_claude() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = valid_alias_run_args(dir.path(), a, b, "out");
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        assert_eq!(validated.variants[0].agent, AgentBackend::Claude);
+        assert_eq!(validated.variants[1].agent, AgentBackend::Claude);
+    }
+
+    #[test]
+    fn run_overrides_agent_b() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = RunArgs {
+            a: Some(a),
+            b: Some(b),
+            model: Some("sonnet".to_string()),
+            model_a: None,
+            model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: Some("cursor".to_string()),
+            variants: Vec::new(),
+            variant_models: Vec::new(),
+            variant_agents: Vec::new(),
+            timeout_secs: 300,
+            out: dir.path().join("out"),
+            parallel: None,
+        };
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        assert_eq!(validated.variants[0].agent, AgentBackend::Claude);
+        assert_eq!(validated.variants[1].agent, AgentBackend::Cursor);
+    }
+
+    #[test]
+    fn variant_form_accepts_per_variant_agent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = RunArgs {
+            a: None,
+            b: None,
+            model: None,
+            model_a: None,
+            model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
+            variants: vec![
+                format!("alpha={}", a.display()),
+                format!("beta={}", b.display()),
+            ],
+            variant_models: vec!["alpha=sonnet".to_string(), "beta=haiku".to_string()],
+            variant_agents: vec!["beta=cursor".to_string()],
+            timeout_secs: 300,
+            out: dir.path().join("out"),
+            parallel: None,
+        };
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        assert_eq!(validated.variants[0].agent, AgentBackend::Claude);
+        assert_eq!(validated.variants[1].agent, AgentBackend::Cursor);
+    }
+
+    #[test]
+    fn run_rejects_unknown_agent_backend() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = RunArgs {
+            a: Some(a),
+            b: Some(b),
+            model: Some("sonnet".to_string()),
+            model_a: None,
+            model_b: None,
+            agent: Some("codex".to_string()),
+            agent_a: None,
+            agent_b: None,
+            variants: Vec::new(),
+            variant_models: Vec::new(),
+            variant_agents: Vec::new(),
+            timeout_secs: 300,
+            out: dir.path().join("out"),
+            parallel: None,
+        };
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("unknown agent backend"));
     }
 
     #[test]
@@ -622,8 +842,12 @@ mod tests {
             model: None,
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: vec![format!("alpha={}", a.display())],
             variant_models: vec!["alpha=sonnet".to_string()],
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -645,11 +869,15 @@ mod tests {
             model: None,
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: vec![
                 format!("alpha={}", a.display()),
                 format!("alpha={}", b.display()),
             ],
             variant_models: vec!["alpha=sonnet".to_string()],
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -670,11 +898,15 @@ mod tests {
             model: None,
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: vec![
                 format!("alpha={}", a.display()),
                 format!("beta={}", a.display()),
             ],
             variant_models: vec!["alpha=sonnet".to_string(), "beta=haiku".to_string()],
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -696,11 +928,15 @@ mod tests {
             model: None,
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: vec![
                 format!("Alpha={}", a.display()),
                 format!("beta={}", b.display()),
             ],
             variant_models: vec!["Alpha=sonnet".to_string(), "beta=haiku".to_string()],
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -722,11 +958,15 @@ mod tests {
             model: None,
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: vec![
                 format!("alpha={}", a.display()),
                 format!("beta={}", b.display()),
             ],
             variant_models: vec!["alpha=sonnet".to_string()],
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
@@ -748,11 +988,15 @@ mod tests {
             model: Some("sonnet".to_string()),
             model_a: None,
             model_b: None,
+            agent: None,
+            agent_a: None,
+            agent_b: None,
             variants: vec![
                 format!("alpha={}", a.display()),
                 format!("beta={}", b.display()),
             ],
             variant_models: vec!["alpha=sonnet".to_string(), "beta=haiku".to_string()],
+            variant_agents: Vec::new(),
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,

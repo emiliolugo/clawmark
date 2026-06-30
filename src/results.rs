@@ -49,6 +49,8 @@ pub struct VariantManifestEntry {
     pub path: String,
     pub hash: String,
     pub model: String,
+    #[serde(default)]
+    pub agent: crate::cli::AgentBackend,
 }
 
 pub fn variant_hash(contents: &[u8]) -> String {

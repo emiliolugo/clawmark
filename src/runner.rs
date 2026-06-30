@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cli::{ValidatedRunArgs, ValidatedVariant};
+use crate::cli::{AgentBackend, ValidatedRunArgs, ValidatedVariant};
 use crate::report;
 use crate::results::{
     append_run_record, harness_path, harness_raw_path, load_run_records, predictions_path,
@@ -62,8 +62,8 @@ pub struct RunRecord {
     pub usage: Option<ClaudeUsage>,
 }
 
-enum ClaudeOutcome {
-    Ok(ClaudeUsage),
+enum AgentOutcome {
+    Ok(Option<ClaudeUsage>),
     Auth(String),
     Other(String),
 }
@@ -72,7 +72,7 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
     let tasks = swebench::load_bundled_smoke_set()?;
     let invocations = args.variants.len() * tasks.len();
     println!(
-        "{} variants x {} tasks x 1 trial = {} Claude invocations",
+        "{} variants x {} tasks x 1 trial = {} agent invocations",
         args.variants.len(),
         tasks.len(),
         invocations
@@ -98,6 +98,7 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
             path: v.canonical_path.display().to_string(),
             hash: v.hash.clone(),
             model: v.model.clone(),
+            agent: v.agent,
         })
         .collect();
     write_atomic_json(&args.out.join(VARIANTS_FILE), &manifest)?;
@@ -138,6 +139,7 @@ async fn run_variant(
     };
     let variant_hash = variant.hash.clone();
     let model = variant.model.clone();
+    let agent = variant.agent;
     let timeout_secs = args.timeout_secs;
     let run_records = run_records.to_path_buf();
 
@@ -160,7 +162,7 @@ async fn run_variant(
             println!("[{variant_label}] {instance_id}");
 
             let record_result = tokio::task::spawn_blocking(move || {
-                run_single(&variant_id, &vh, vc.as_slice(), &task, &model, timeout_secs)
+                run_single(&variant_id, &vh, vc.as_slice(), &task, &model, agent, timeout_secs)
             })
             .await
             .map_err(|e| format!("task panicked: {e}"))?;
@@ -218,6 +220,7 @@ pub fn run_single(
     variant_contents: &[u8],
     task: &TaskInstance,
     model: &str,
+    agent: AgentBackend,
     timeout_secs: u64,
 ) -> Result<RunRecord, String> {
     let started = Instant::now();
@@ -228,24 +231,34 @@ pub fn run_single(
     match sandbox::create(task) {
         Err(clone_error) => error = Some(clone_error),
         Ok(workspace) => {
-            if let Err(inject_error) = sandbox::inject_claude_md(&workspace, variant_contents) {
+            if let Err(inject_error) = sandbox::inject_variant(&workspace, variant_contents) {
                 error = Some(inject_error);
             } else {
-                match invoke_claude(
-                    &workspace.path,
-                    model,
-                    &task.problem_statement,
-                    timeout_secs,
-                ) {
-                    ClaudeOutcome::Ok(u) => {
-                        usage = Some(u);
+                let outcome = match agent {
+                    AgentBackend::Claude => invoke_claude(
+                        &workspace.path,
+                        model,
+                        &task.problem_statement,
+                        timeout_secs,
+                    ),
+                    AgentBackend::Cursor => invoke_cursor(
+                        &workspace.path,
+                        model,
+                        &task.problem_statement,
+                        timeout_secs,
+                    ),
+                };
+                match outcome {
+                    AgentOutcome::Ok(u) => {
+                        usage = u;
                     }
-                    ClaudeOutcome::Auth(message) => {
+                    AgentOutcome::Auth(message) => {
                         return Err(format!(
-                            "Claude authentication failure; aborting run: {message}"
+                            "{} authentication failure; aborting run: {message}",
+                            agent.as_str()
                         ));
                     }
-                    ClaudeOutcome::Other(message) => error = Some(message),
+                    AgentOutcome::Other(message) => error = Some(message),
                 }
 
                 match sandbox::collect_patch(&workspace) {
@@ -279,27 +292,26 @@ pub fn run_single(
     })
 }
 
-fn invoke_claude(
-    workspace_path: &Path,
-    model: &str,
-    problem_statement: &str,
+/// Spawn `program` in `cwd` with the given argv, enforcing a wall-clock timeout.
+///
+/// Returns the collected output on completion, or an error string describing a
+/// spawn failure, wait failure, or timeout. The error string is prefixed with
+/// `<program> failed: ...` / `<program> timed out ...` so callers can surface it
+/// directly as a per-task error.
+fn run_process_with_timeout(
+    program: &str,
+    argv: &[OsString],
+    cwd: &Path,
     timeout_secs: u64,
-) -> ClaudeOutcome {
-    let argv = claude_argv(model, workspace_path, problem_statement);
-    let spawn = Command::new("claude")
-        .args(&argv)
-        .current_dir(workspace_path)
+) -> Result<std::process::Output, String> {
+    let mut child = Command::new(program)
+        .args(argv)
+        .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn();
-
-    let mut child = match spawn {
-        Ok(child) => child,
-        Err(e) => {
-            return ClaudeOutcome::Other(format!("claude failed: failed to spawn claude: {e}"))
-        }
-    };
+        .spawn()
+        .map_err(|e| format!("{program} failed: failed to spawn {program}: {e}"))?;
 
     let timeout = Duration::from_secs(timeout_secs);
     let started = Instant::now();
@@ -310,40 +322,110 @@ fn invoke_claude(
                 if started.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return ClaudeOutcome::Other(format!("claude timed out after {timeout_secs}s"));
+                    return Err(format!("{program} timed out after {timeout_secs}s"));
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
-            Err(e) => {
-                return ClaudeOutcome::Other(format!(
-                    "claude failed: error waiting for process: {e}"
-                ))
-            }
+            Err(e) => return Err(format!("{program} failed: error waiting for process: {e}")),
         }
     }
 
-    let output = match child.wait_with_output() {
+    child
+        .wait_with_output()
+        .map_err(|e| format!("{program} failed: {e}"))
+}
+
+fn invoke_claude(
+    workspace_path: &Path,
+    model: &str,
+    problem_statement: &str,
+    timeout_secs: u64,
+) -> AgentOutcome {
+    let argv = claude_argv(model, workspace_path, problem_statement);
+    let output = match run_process_with_timeout("claude", &argv, workspace_path, timeout_secs) {
         Ok(output) => output,
-        Err(e) => return ClaudeOutcome::Other(format!("claude failed: {e}")),
+        Err(e) => return AgentOutcome::Other(e),
     };
 
     if output.status.success() {
-        return ClaudeOutcome::Ok(parse_claude_usage(&output.stdout));
+        return AgentOutcome::Ok(Some(parse_claude_usage(&output.stdout)));
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     if is_auth_failure(&stderr) {
-        return ClaudeOutcome::Auth(stderr.trim().to_string());
+        return AgentOutcome::Auth(stderr.trim().to_string());
     }
-    let detail = {
-        let trimmed = stderr.trim();
-        if trimmed.is_empty() {
-            format!("{}", output.status)
-        } else {
-            trimmed.to_string()
-        }
+    AgentOutcome::Other(format!(
+        "claude failed: {}",
+        nonempty_detail(&stderr, output.status)
+    ))
+}
+
+fn invoke_cursor(
+    workspace_path: &Path,
+    model: &str,
+    problem_statement: &str,
+    timeout_secs: u64,
+) -> AgentOutcome {
+    let argv = cursor_argv(model, problem_statement);
+    let output = match run_process_with_timeout("cursor-agent", &argv, workspace_path, timeout_secs)
+    {
+        Ok(output) => output,
+        Err(e) => return AgentOutcome::Other(e),
     };
-    ClaudeOutcome::Other(format!("claude failed: {detail}"))
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if is_auth_failure(&stderr) {
+            return AgentOutcome::Auth(stderr.trim().to_string());
+        }
+        return AgentOutcome::Other(format!(
+            "cursor-agent failed: {}",
+            nonempty_detail(&stderr, output.status)
+        ));
+    }
+
+    // cursor-agent exits 0 even when the task itself errored; the failure is
+    // reported inside the JSON result object. It does not expose token usage.
+    if let Some(message) = cursor_error_message(&output.stdout) {
+        if is_auth_failure(&message) {
+            return AgentOutcome::Auth(message);
+        }
+        return AgentOutcome::Other(format!("cursor-agent failed: {message}"));
+    }
+    AgentOutcome::Ok(None)
+}
+
+fn nonempty_detail(stderr: &str, status: std::process::ExitStatus) -> String {
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        format!("{status}")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Extract an error message from a cursor-agent JSON result, if the run failed.
+///
+/// Returns `None` when the JSON is absent, unparseable, or reports success.
+fn cursor_error_message(stdout: &[u8]) -> Option<String> {
+    let value = serde_json::from_slice::<serde_json::Value>(stdout).ok()?;
+    let is_error = value
+        .get("is_error")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let subtype_error =
+        value.get("subtype").and_then(serde_json::Value::as_str) == Some("error");
+    if !is_error && !subtype_error {
+        return None;
+    }
+    let message = value
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("cursor-agent reported an error");
+    Some(message.to_string())
 }
 
 fn is_auth_failure(stderr: &str) -> bool {
@@ -365,6 +447,25 @@ fn claude_argv(model: &str, workspace_path: &Path, problem_statement: &str) -> V
         OsString::from("--add-dir"),
         workspace_path.as_os_str().to_os_string(),
         OsString::from("--"),
+        OsString::from(problem_statement),
+    ]
+}
+
+// cursor-agent operates on the process working directory (set to the cloned
+// workspace by the caller), so there is no `--add-dir` equivalent here.
+// `--force` bypasses command/permission prompts and `--trust` trusts the freshly
+// cloned workspace without prompting, both required for unattended headless runs.
+// cursor-agent's JSON output does not include token usage, so cost is reported
+// as `n/a` for this backend.
+fn cursor_argv(model: &str, problem_statement: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("-p"),
+        OsString::from("--output-format"),
+        OsString::from("json"),
+        OsString::from("--force"),
+        OsString::from("--trust"),
+        OsString::from("--model"),
+        OsString::from(model),
         OsString::from(problem_statement),
     ]
 }
@@ -541,6 +642,40 @@ mod tests {
         .map(OsString::from)
         .collect();
         assert_eq!(argv, expected);
+    }
+
+    #[test]
+    fn cursor_argv_has_expected_order_and_values() {
+        let argv = cursor_argv("gpt-5", "fix the bug");
+        let expected: Vec<OsString> = [
+            "-p",
+            "--output-format",
+            "json",
+            "--force",
+            "--trust",
+            "--model",
+            "gpt-5",
+            "fix the bug",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
+        assert_eq!(argv, expected);
+    }
+
+    #[test]
+    fn cursor_error_message_reads_json_failure() {
+        let stdout = br#"{"type":"result","subtype":"error","is_error":true,"result":"Authentication failed"}"#;
+        assert_eq!(
+            cursor_error_message(stdout),
+            Some("Authentication failed".to_string())
+        );
+    }
+
+    #[test]
+    fn cursor_error_message_ignores_success() {
+        let stdout = br#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#;
+        assert_eq!(cursor_error_message(stdout), None);
     }
 
     #[test]

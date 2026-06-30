@@ -35,6 +35,8 @@ pub fn collect_check_results() -> Vec<CheckResult> {
         check_docker_running(),
         check_claude_present(),
         check_claude_authenticated(),
+        check_cursor_present(),
+        check_cursor_authenticated(),
         check_python_version(),
         check_swebench_version(),
         check_harness_cli(),
@@ -62,9 +64,9 @@ fn check_claude_present() -> CheckResult {
         {
             pass("Claude CLI present", stdout_text(&output).trim())
         }
-        _ => fail(
+        _ => warn(
             "Claude CLI present",
-            "Claude CLI not found. Install from https://claude.ai/download and ensure it is on PATH.",
+            "Claude CLI not found. Required only for the claude backend. Install from https://claude.ai/download and ensure it is on PATH.",
         ),
     }
 }
@@ -77,9 +79,33 @@ fn check_claude_authenticated() -> CheckResult {
         Ok(output) if output.status.success() && !stdout_text(&output).trim().is_empty() => {
             pass("Claude authenticated", "claude ping succeeded")
         }
-        _ => fail(
+        _ => warn(
             "Claude authenticated",
-            "Claude CLI is not authenticated. Run `claude` interactively to log in.",
+            "Claude CLI is not authenticated. Required only for the claude backend. Run `claude` interactively to log in.",
+        ),
+    }
+}
+
+fn check_cursor_present() -> CheckResult {
+    match run_command_with_timeout(&["cursor-agent", "--version"], Duration::from_secs(5)) {
+        Ok(output) if output.status.success() && !stdout_text(&output).trim().is_empty() => {
+            pass("Cursor CLI present", stdout_text(&output).trim())
+        }
+        _ => warn(
+            "Cursor CLI present",
+            "cursor-agent not found. Required only for the cursor backend. Install the Cursor CLI and ensure it is on PATH.",
+        ),
+    }
+}
+
+fn check_cursor_authenticated() -> CheckResult {
+    match run_command_with_timeout(&["cursor-agent", "status"], Duration::from_secs(15)) {
+        Ok(output) if output.status.success() && !stdout_text(&output).trim().is_empty() => {
+            pass("Cursor authenticated", "cursor-agent status succeeded")
+        }
+        _ => warn(
+            "Cursor authenticated",
+            "cursor-agent is not authenticated. Required only for the cursor backend. Run `cursor-agent login` (or set CURSOR_API_KEY).",
         ),
     }
 }
@@ -257,6 +283,14 @@ fn fail(name: &'static str, message: &str) -> CheckResult {
     CheckResult {
         name,
         status: CheckStatus::Fail,
+        message: message.to_string(),
+    }
+}
+
+fn warn(name: &'static str, message: &str) -> CheckResult {
+    CheckResult {
+        name,
+        status: CheckStatus::Warn,
         message: message.to_string(),
     }
 }
