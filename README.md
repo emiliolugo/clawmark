@@ -88,6 +88,57 @@ cargo build --release
 ./target/release/clawmark run --a variants/a.md --b variants/b.md --model sonnet --timeout-secs 600 --out out
 ```
 
+### Trials and statistics
+
+Run each variant/task pair multiple times with `--trials`:
+
+```sh
+cargo run -- run --a variants/a.md --b variants/b.md \
+  --model sonnet --trials 3 --timeout-secs 600 --out out
+```
+
+The leaderboard reports a Wilson 95% confidence interval on each variant's
+resolve rate, and a pairwise exact McNemar p-value for every pair of
+variants (paired by task + trial). With the default 5-task bundled set,
+differences between variants are rarely statistically significant — for a
+credible verdict, use `--trials 3` or more and/or a larger task set via
+`--instances`/`--dataset` below.
+
+### Custom task sets
+
+By default `run` uses the bundled 5-task smoke set. Use `--dataset` to
+supply a custom JSONL file of SWE-bench Lite instances, and/or
+`--instances` to filter to specific instance IDs:
+
+```sh
+cargo run -- run --a variants/a.md --b variants/b.md \
+  --model sonnet --dataset tasks.jsonl --timeout-secs 600 --out out
+
+cargo run -- run --a variants/a.md --b variants/b.md \
+  --model sonnet --instances astropy__astropy-12907,astropy__astropy-6938 \
+  --timeout-secs 600 --out out
+```
+
+**Contract:** instances must belong to SWE-bench Lite's **test split** —
+this is not validated by clawmark, and the harness step will fail (or
+silently misscore) if it isn't true.
+
+### Resuming
+
+If a run is interrupted, re-invoke it with the same arguments plus
+`--resume` and the same `--out` directory:
+
+```sh
+cargo run -- run --a variants/a.md --b variants/b.md \
+  --model sonnet --timeout-secs 600 --out out --resume
+```
+
+`--resume` requires `--out` to already exist (the opposite of a fresh run)
+and requires the invocation to match the original run (same variants,
+trials, and task set). It skips every (variant, task, trial) invocation
+already completed successfully, retries any that previously errored, and
+produces the same report shape as a fresh run.
+
 ## Documentation
 
 - [What it does](./docs/what-it-does.md)
