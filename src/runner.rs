@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -13,10 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::cli::{AgentBackend, ValidatedRunArgs, ValidatedVariant};
 use crate::report;
 use crate::results::{
-    append_run_record, harness_path, harness_raw_path, load_harness_results, load_run_meta,
-    load_run_records, load_variants_manifest, predictions_path, write_atomic_json,
-    write_predictions_jsonl, RunMeta, SwebenchPrediction, VariantManifestEntry, RUN_META_FILE,
-    RUN_RECORDS_FILE, SCHEMA_VERSION, VARIANTS_FILE,
+    self, append_run_record, harness_path, harness_raw_path, load_harness_results, load_run_meta,
+    load_run_records, load_variants_manifest, predictions_path, write_atomic_json, RunMeta,
+    VariantManifestEntry, RUN_META_FILE, RUN_RECORDS_FILE, SCHEMA_VERSION, VARIANTS_FILE,
 };
 use crate::sandbox;
 use crate::swebench::{Prediction, TaskInstance};
@@ -76,6 +75,25 @@ enum AgentOutcome {
     Other(String),
 }
 
+/// Build the set of (label, `instance_id`, trial) keys that are already
+/// complete: the *last* record for a key wins, and a key only counts as
+/// complete if that last record has no error (errored keys are retried).
+fn completed_keys(records: &[RunRecord]) -> HashSet<(String, String, u32)> {
+    let mut last_ok: HashMap<(String, String, u32), bool> = HashMap::new();
+    for record in records {
+        let key = (
+            record.key.variant.label.clone(),
+            record.key.instance_id.clone(),
+            record.key.trial,
+        );
+        last_ok.insert(key, record.error.is_none());
+    }
+    last_ok
+        .into_iter()
+        .filter_map(|(key, ok)| ok.then_some(key))
+        .collect()
+}
+
 pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
     let tasks = &args.tasks;
     let trials = args.trials;
@@ -85,17 +103,6 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
         args.variants.len(),
         tasks.len(),
     );
-
-    fs::create_dir(&args.out).map_err(|e| {
-        format!(
-            "failed to create output directory {}: {e}",
-            args.out.display()
-        )
-    })?;
-    fs::create_dir(args.out.join("predictions"))
-        .map_err(|e| format!("failed to create predictions directory: {e}"))?;
-    fs::create_dir(args.out.join("harness"))
-        .map_err(|e| format!("failed to create harness directory: {e}"))?;
 
     let manifest: Vec<VariantManifestEntry> = args
         .variants
@@ -109,7 +116,6 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
             agent: v.agent,
         })
         .collect();
-    write_atomic_json(&args.out.join(VARIANTS_FILE), &manifest)?;
 
     let instance_ids: Vec<String> = tasks.iter().map(|t| t.instance_id.clone()).collect();
     let meta = RunMeta {
@@ -118,16 +124,57 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
         dataset_source: args.dataset_source.clone(),
         instance_ids: instance_ids.clone(),
     };
-    write_atomic_json(&args.out.join(RUN_META_FILE), &meta)?;
+
+    if args.resume {
+        results::verify_resume_dir(&args.out, &manifest, &meta)?;
+        fs::create_dir_all(args.out.join("predictions"))
+            .map_err(|e| format!("failed to create predictions directory: {e}"))?;
+        fs::create_dir_all(args.out.join("harness"))
+            .map_err(|e| format!("failed to create harness directory: {e}"))?;
+    } else {
+        fs::create_dir(&args.out).map_err(|e| {
+            format!(
+                "failed to create output directory {}: {e}",
+                args.out.display()
+            )
+        })?;
+        fs::create_dir(args.out.join("predictions"))
+            .map_err(|e| format!("failed to create predictions directory: {e}"))?;
+        fs::create_dir(args.out.join("harness"))
+            .map_err(|e| format!("failed to create harness directory: {e}"))?;
+        write_atomic_json(&args.out.join(VARIANTS_FILE), &manifest)?;
+        write_atomic_json(&args.out.join(RUN_META_FILE), &meta)?;
+    }
 
     let run_records = args.out.join(RUN_RECORDS_FILE);
+    let completed: HashSet<(String, String, u32)> = if run_records.is_file() {
+        completed_keys(&load_run_records(&run_records)?)
+    } else {
+        HashSet::new()
+    };
+
+    let mut executed_any_by_trial: HashMap<(String, u32), bool> = HashMap::new();
     for variant in &args.variants {
         for trial in 1..=trials {
-            run_variant_trial(variant, trial, tasks, args, &run_records).await?;
+            let executed_any =
+                run_variant_trial(variant, trial, tasks, args, &run_records, &completed).await?;
+            results::rebuild_predictions(&args.out, &variant.label, trial, &instance_ids)?;
+            executed_any_by_trial.insert((variant.label.clone(), trial), executed_any);
         }
     }
     for variant in &args.variants {
         for trial in 1..=trials {
+            let executed_any = executed_any_by_trial
+                .get(&(variant.label.clone(), trial))
+                .copied()
+                .unwrap_or(true);
+            if !executed_any && harness_path(&args.out, &variant.label, trial).is_file() {
+                println!(
+                    "[{} t{trial}] harness summary present, skipping",
+                    variant.label
+                );
+                continue;
+            }
             invoke_harness(
                 &variant.label,
                 trial,
@@ -145,17 +192,22 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Run one (variant, trial) pass over `tasks`, skipping any (label,
+/// `instance_id`, trial) already present in `completed`. Returns whether at
+/// least one task was actually spawned this session (`executed_any`); the
+/// harness invocation for this (variant, trial) is skipped when nothing was
+/// spawned and a prior harness summary already exists (resume fast path).
 async fn run_variant_trial(
     variant: &ValidatedVariant,
     trial: u32,
     tasks: &[TaskInstance],
     args: &ValidatedRunArgs,
     run_records: &Path,
-) -> Result<(), String> {
+    completed: &HashSet<(String, String, u32)>,
+) -> Result<bool, String> {
     println!("== variant {} trial {trial} ==", variant.label);
     let semaphore = Arc::new(tokio::sync::Semaphore::new(args.parallel));
     let write_lock = Arc::new(tokio::sync::Mutex::new(()));
-    let predictions = Arc::new(tokio::sync::Mutex::new(Vec::with_capacity(tasks.len())));
     let variant_contents = Arc::new(
         fs::read(&variant.canonical_path)
             .map_err(|e| format!("failed to read variant {}: {e}", variant.label))?,
@@ -172,11 +224,22 @@ async fn run_variant_trial(
     let run_records = run_records.to_path_buf();
 
     let mut handles = Vec::with_capacity(tasks.len());
+    let mut executed_any = false;
     for task in tasks {
+        let instance_id = task.instance_id.clone();
+        let key = (variant_id.label.clone(), instance_id.clone(), trial);
+        if completed.contains(&key) {
+            println!(
+                "[{} t{trial}] {instance_id}: already complete, skipping",
+                variant_id.label
+            );
+            continue;
+        }
+        executed_any = true;
+
         let task = task.clone();
         let sem = Arc::clone(&semaphore);
         let write_lock = Arc::clone(&write_lock);
-        let predictions = Arc::clone(&predictions);
         let vc = Arc::clone(&variant_contents);
         let vh = variant_hash.clone();
         let model = model.clone();
@@ -186,7 +249,6 @@ async fn run_variant_trial(
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
-            let instance_id = task.instance_id.clone();
             println!("[{variant_label} t{trial}] {instance_id}");
 
             let record_result = tokio::task::spawn_blocking(move || {
@@ -214,11 +276,6 @@ async fn run_variant_trial(
                 append_run_record(&run_records, &record)?;
             }
 
-            predictions
-                .lock()
-                .await
-                .push(SwebenchPrediction::from(&record.prediction));
-
             Ok::<(), String>(())
         });
         handles.push(handle);
@@ -244,11 +301,7 @@ async fn run_variant_trial(
         return Err(e);
     }
 
-    let preds = Arc::try_unwrap(predictions)
-        .expect("predictions Arc should have no other owners")
-        .into_inner();
-    write_predictions_jsonl(&predictions_path(&args.out, &variant.label, trial), &preds)?;
-    Ok(())
+    Ok(executed_any)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -816,5 +869,45 @@ mod tests {
         assert!(raw
             .to_string_lossy()
             .ends_with("clawmark__a.clawmark-a-t2.json"));
+    }
+
+    fn record(label: &str, instance_id: &str, trial: u32, error: Option<&str>) -> RunRecord {
+        RunRecord {
+            schema_version: SCHEMA_VERSION,
+            key: RunKey {
+                variant: VariantId {
+                    index: 0,
+                    label: label.to_string(),
+                },
+                variant_hash: "hash".to_string(),
+                instance_id: instance_id.to_string(),
+                trial,
+            },
+            prediction: Prediction {
+                instance_id: instance_id.to_string(),
+                model_patch: String::new(),
+                model_name_or_path: format!("clawmark/{label}"),
+            },
+            elapsed_secs: 1.0,
+            error: error.map(str::to_string),
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn completed_key_skips_rerun() {
+        // Errored record followed by a successful one for the same key: the
+        // key counts as completed (last record wins).
+        let records = vec![
+            record("a", "astropy__astropy-12907", 1, Some("boom")),
+            record("a", "astropy__astropy-12907", 1, None),
+        ];
+        let completed = completed_keys(&records);
+        assert!(completed.contains(&("a".to_string(), "astropy__astropy-12907".to_string(), 1)));
+
+        // Only an errored record for this key: it is not completed.
+        let records = vec![record("b", "astropy__astropy-14182", 1, Some("boom"))];
+        let completed = completed_keys(&records);
+        assert!(!completed.contains(&("b".to_string(), "astropy__astropy-14182".to_string(), 1)));
     }
 }

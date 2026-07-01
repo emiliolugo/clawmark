@@ -109,6 +109,9 @@ pub struct RunArgs {
     /// Number of trials per variant/task pair (1-10, default 1).
     #[arg(long)]
     pub trials: Option<u16>,
+    /// Resume an interrupted run in an existing --out directory.
+    #[arg(long, default_value_t = false)]
+    pub resume: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -129,6 +132,7 @@ pub struct ValidatedRunArgs {
     pub tasks: Vec<crate::swebench::TaskInstance>,
     pub dataset_source: String,
     pub trials: u32,
+    pub resume: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +178,7 @@ impl RunArgs {
             ));
         }
 
-        validate_run_out_dir(&self.out)?;
+        validate_run_out_dir(&self.out, self.resume)?;
 
         let parallel = match self.parallel {
             None => 1,
@@ -206,6 +210,7 @@ impl RunArgs {
             tasks,
             dataset_source,
             trials,
+            resume: self.resume,
         })
     }
 
@@ -472,7 +477,17 @@ fn validate_variant_path(path: &Path, cwd: &Path) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-fn validate_run_out_dir(out: &Path) -> Result<(), String> {
+fn validate_run_out_dir(out: &Path, resume: bool) -> Result<(), String> {
+    if resume {
+        if !out.is_dir() {
+            return Err(format!(
+                "--resume requires an existing output directory at {}",
+                out.display()
+            ));
+        }
+        return Ok(());
+    }
+
     if out.exists() {
         return Err(format!(
             "output directory {} already exists; choose a new --out path",
@@ -600,6 +615,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         }
     }
 
@@ -674,6 +690,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -704,6 +721,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -755,6 +773,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -785,6 +804,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let validated = args.validate_with_cwd(dir.path()).expect("should accept 1");
         assert_eq!(validated.parallel, 1);
@@ -813,6 +833,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -844,6 +865,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -888,6 +910,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -922,6 +945,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -953,6 +977,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1001,6 +1026,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1034,6 +1060,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1066,6 +1093,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1099,6 +1127,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1132,6 +1161,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1165,6 +1195,7 @@ mod tests {
             dataset: None,
             instances: None,
             trials: None,
+            resume: false,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1339,5 +1370,45 @@ mod tests {
             .validate_with_cwd(dir.path())
             .expect_err("expected validation error");
         assert!(err.contains("--trials must be between 1 and 10"));
+    }
+
+    #[test]
+    fn resume_requires_existing_out_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "missing-out");
+        args.resume = true;
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("requires an existing"));
+    }
+
+    #[test]
+    fn fresh_run_still_rejects_existing_out() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let out = dir.path().join("out");
+        fs::create_dir(&out).expect("create out");
+        let args = valid_alias_run_args(dir.path(), a, b, "out");
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("already exists"));
+    }
+
+    #[test]
+    fn resume_accepts_existing_out_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let out = dir.path().join("out");
+        fs::create_dir(&out).expect("create out");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.resume = true;
+        args.validate_with_cwd(dir.path())
+            .expect("resume should accept an existing out dir");
     }
 }
