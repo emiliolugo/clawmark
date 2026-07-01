@@ -4,4 +4,5 @@ pub mod report;
 pub mod results;
 pub mod runner;
 pub mod sandbox;
+pub mod stats;
 pub mod swebench;
