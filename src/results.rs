@@ -216,21 +216,22 @@ pub fn load_run_meta(path: &Path) -> Result<RunMeta, String> {
         .map_err(|e| format!("failed to parse run meta {}: {e}", path.display()))
 }
 
-pub fn predictions_path(out: &Path, label: &str) -> PathBuf {
-    out.join("predictions").join(format!("{label}.jsonl"))
+pub fn predictions_path(out: &Path, label: &str, trial: u32) -> PathBuf {
+    out.join("predictions")
+        .join(format!("{label}-t{trial}.jsonl"))
 }
 
-pub fn harness_path(out: &Path, label: &str) -> PathBuf {
-    out.join("harness").join(format!("{label}.json"))
+pub fn harness_path(out: &Path, label: &str, trial: u32) -> PathBuf {
+    out.join("harness").join(format!("{label}-t{trial}.json"))
 }
 
-pub fn harness_raw_path(out: &Path, label: &str) -> PathBuf {
+pub fn harness_raw_path(out: &Path, label: &str, trial: u32) -> PathBuf {
     out.join("harness")
-        .join(format!("clawmark__{label}.clawmark-{label}.json"))
+        .join(format!("clawmark__{label}.clawmark-{label}-t{trial}.json"))
 }
 
 /// Write a minimal output directory ready for harness evaluation: empty patches
-/// for all bundled smoke tasks, for variants A and B.
+/// for all bundled smoke tasks, for variants A and B, trial 1.
 pub fn write_minimum_valid_dir(out: &Path) -> Result<(), String> {
     fs::create_dir_all(out.join("predictions"))
         .map_err(|e| format!("failed to create predictions directory: {e}"))?;
@@ -246,7 +247,7 @@ pub fn write_minimum_valid_dir(out: &Path) -> Result<(), String> {
                 model_name_or_path: format!("clawmark/{label}"),
             })
             .collect::<Vec<_>>();
-        write_predictions_jsonl(&predictions_path(out, label), &prediction)?;
+        write_predictions_jsonl(&predictions_path(out, label, 1), &prediction)?;
     }
     Ok(())
 }
@@ -300,7 +301,7 @@ mod tests {
         assert!(dir.path().join("harness").is_dir());
 
         for label in ["a", "b"] {
-            let path = predictions_path(dir.path(), label);
+            let path = predictions_path(dir.path(), label, 1);
             let contents = fs::read_to_string(&path).expect("read predictions");
             let lines: Vec<&str> = contents
                 .lines()
@@ -329,6 +330,7 @@ mod tests {
                 },
                 variant_hash: variant_hash(b"a"),
                 instance_id: "astropy__astropy-12907".to_string(),
+                trial: 1,
             },
             prediction: Prediction {
                 instance_id: "astropy__astropy-12907".to_string(),

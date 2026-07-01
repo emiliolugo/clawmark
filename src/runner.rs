@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -12,9 +13,10 @@ use serde::{Deserialize, Serialize};
 use crate::cli::{AgentBackend, ValidatedRunArgs, ValidatedVariant};
 use crate::report;
 use crate::results::{
-    append_run_record, harness_path, harness_raw_path, load_run_records, predictions_path,
-    write_atomic_json, write_predictions_jsonl, RunMeta, SwebenchPrediction, VariantManifestEntry,
-    RUN_META_FILE, RUN_RECORDS_FILE, SCHEMA_VERSION, VARIANTS_FILE,
+    append_run_record, harness_path, harness_raw_path, load_harness_results, load_run_meta,
+    load_run_records, load_variants_manifest, predictions_path, write_atomic_json,
+    write_predictions_jsonl, RunMeta, SwebenchPrediction, VariantManifestEntry, RUN_META_FILE,
+    RUN_RECORDS_FILE, SCHEMA_VERSION, VARIANTS_FILE,
 };
 use crate::sandbox;
 use crate::swebench::{Prediction, TaskInstance};
@@ -30,9 +32,13 @@ impl VariantId {
         format!("clawmark/{}", self.label)
     }
 
-    pub fn run_id(&self) -> String {
-        format!("clawmark-{}", self.label)
+    pub fn run_id(&self, trial: u32) -> String {
+        format!("clawmark-{}-t{trial}", self.label)
     }
+}
+
+fn default_trial() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +46,8 @@ pub struct RunKey {
     pub variant: VariantId,
     pub variant_hash: String,
     pub instance_id: String,
+    #[serde(default = "default_trial")]
+    pub trial: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -70,12 +78,12 @@ enum AgentOutcome {
 
 pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
     let tasks = &args.tasks;
-    let invocations = args.variants.len() * tasks.len();
+    let trials = args.trials;
+    let invocations = args.variants.len() * tasks.len() * trials as usize;
     println!(
-        "{} variants x {} tasks x 1 trial = {} agent invocations",
+        "{} variants x {} tasks x {trials} trials = {invocations} agent invocations",
         args.variants.len(),
         tasks.len(),
-        invocations
     );
 
     fs::create_dir(&args.out).map_err(|e| {
@@ -106,7 +114,7 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
     let instance_ids: Vec<String> = tasks.iter().map(|t| t.instance_id.clone()).collect();
     let meta = RunMeta {
         schema_version: SCHEMA_VERSION,
-        trials: 1,
+        trials,
         dataset_source: args.dataset_source.clone(),
         instance_ids: instance_ids.clone(),
     };
@@ -114,26 +122,37 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
 
     let run_records = args.out.join(RUN_RECORDS_FILE);
     for variant in &args.variants {
-        run_variant(variant, tasks, args, &run_records).await?;
+        for trial in 1..=trials {
+            run_variant_trial(variant, trial, tasks, args, &run_records).await?;
+        }
     }
     for variant in &args.variants {
-        invoke_harness(&variant.label, &args.out, args.timeout_secs, &instance_ids)?;
+        for trial in 1..=trials {
+            invoke_harness(
+                &variant.label,
+                trial,
+                &args.out,
+                args.timeout_secs,
+                &instance_ids,
+            )?;
+        }
     }
 
     let computed = report::compute_report(&args.out)?;
     report::render_terminal_table(&computed);
-    print_failure_summary(&computed, &args.out);
+    print_failure_summary(&args.out);
     report::write_report_json(&args.out, &computed)?;
     Ok(())
 }
 
-async fn run_variant(
+async fn run_variant_trial(
     variant: &ValidatedVariant,
+    trial: u32,
     tasks: &[TaskInstance],
     args: &ValidatedRunArgs,
     run_records: &Path,
 ) -> Result<(), String> {
-    println!("== variant {} ==", variant.label);
+    println!("== variant {} trial {trial} ==", variant.label);
     let semaphore = Arc::new(tokio::sync::Semaphore::new(args.parallel));
     let write_lock = Arc::new(tokio::sync::Mutex::new(()));
     let predictions = Arc::new(tokio::sync::Mutex::new(Vec::with_capacity(tasks.len())));
@@ -168,11 +187,12 @@ async fn run_variant(
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
             let instance_id = task.instance_id.clone();
-            println!("[{variant_label}] {instance_id}");
+            println!("[{variant_label} t{trial}] {instance_id}");
 
             let record_result = tokio::task::spawn_blocking(move || {
                 run_single(
                     &variant_id,
+                    trial,
                     &vh,
                     vc.as_slice(),
                     &task,
@@ -186,7 +206,7 @@ async fn run_variant(
             let record = record_result?;
 
             if let Some(err) = &record.error {
-                println!("[{variant_label}] {instance_id}: error: {err}");
+                println!("[{variant_label} t{trial}] {instance_id}: error: {err}");
             }
 
             {
@@ -227,12 +247,14 @@ async fn run_variant(
     let preds = Arc::try_unwrap(predictions)
         .expect("predictions Arc should have no other owners")
         .into_inner();
-    write_predictions_jsonl(&predictions_path(&args.out, &variant.label), &preds)?;
+    write_predictions_jsonl(&predictions_path(&args.out, &variant.label, trial), &preds)?;
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_single(
     variant: &VariantId,
+    trial: u32,
     variant_hash: &str,
     variant_contents: &[u8],
     task: &TaskInstance,
@@ -297,6 +319,7 @@ pub fn run_single(
             variant: variant.clone(),
             variant_hash: variant_hash.to_string(),
             instance_id: task.instance_id.clone(),
+            trial,
         },
         prediction: Prediction {
             instance_id: task.instance_id.clone(),
@@ -522,6 +545,7 @@ fn parse_claude_usage(stdout: &[u8]) -> ClaudeUsage {
 
 pub fn invoke_harness(
     label: &str,
+    trial: u32,
     out: &Path,
     timeout_secs: u64,
     instance_ids: &[String],
@@ -530,8 +554,8 @@ pub fn invoke_harness(
     let abs_out = out
         .canonicalize()
         .map_err(|e| format!("failed to resolve output directory {}: {e}", out.display()))?;
-    let predictions = predictions_path(&abs_out, label);
-    let run_id = format!("clawmark-{label}");
+    let predictions = predictions_path(&abs_out, label, trial);
+    let run_id = format!("clawmark-{label}-t{trial}");
     let argv = harness_argv(&predictions, &run_id, timeout_secs, instance_ids);
     let status = Command::new("python3")
         .args(&argv)
@@ -540,15 +564,15 @@ pub fn invoke_harness(
         .map_err(|e| format!("failed to run swebench harness: {e}"))?;
     if !status.success() {
         return Err(format!(
-            "swebench harness failed for variant {label} ({status})"
+            "swebench harness failed for variant {label} trial {trial} ({status})"
         ));
     }
-    finalize_harness_summary(out, label)
+    finalize_harness_summary(out, label, trial)
 }
 
-fn finalize_harness_summary(out: &Path, label: &str) -> Result<(), String> {
-    let raw = harness_raw_path(out, label);
-    let stable = harness_path(out, label);
+fn finalize_harness_summary(out: &Path, label: &str, trial: u32) -> Result<(), String> {
+    let raw = harness_raw_path(out, label, trial);
+    let stable = harness_path(out, label, trial);
     if !raw.is_file() {
         return Err(format!(
             "swebench harness raw summary missing: {}",
@@ -565,24 +589,40 @@ fn finalize_harness_summary(out: &Path, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn print_failure_summary(report: &report::Report, out: &Path) {
+/// Print unresolved (variant, task, trial) invocations by reloading the
+/// harness results and run records directly; the aggregate `Report` only
+/// carries resolved *counts*, not per-trial resolution, so this is
+/// recomputed independently of `report::compute_report`.
+fn print_failure_summary(out: &Path) {
+    let Ok(meta) = load_run_meta(&out.join(RUN_META_FILE)) else {
+        return;
+    };
+    let Ok(variants) = load_variants_manifest(&out.join(VARIANTS_FILE)) else {
+        return;
+    };
     let records = load_run_records(&out.join(RUN_RECORDS_FILE)).unwrap_or_default();
+
     let mut failures = Vec::new();
-    for task in &report.per_task {
-        for (idx, resolved) in task.resolved.iter().enumerate() {
-            if *resolved {
-                continue;
+    for variant in &variants {
+        for trial in 1..=meta.trials {
+            let resolved_set: HashSet<String> =
+                load_harness_results(&harness_path(out, &variant.label, trial))
+                    .map(|h| h.resolved_ids.into_iter().collect())
+                    .unwrap_or_default();
+            for instance_id in &meta.instance_ids {
+                if resolved_set.contains(instance_id) {
+                    continue;
+                }
+                let error = records
+                    .iter()
+                    .find(|r| {
+                        r.key.variant.label == variant.label
+                            && &r.key.instance_id == instance_id
+                            && r.key.trial == trial
+                    })
+                    .and_then(|r| r.error.clone());
+                failures.push((variant.label.clone(), trial, instance_id.clone(), error));
             }
-            let Some(variant) = report.variants.get(idx) else {
-                continue;
-            };
-            let error = records
-                .iter()
-                .find(|r| {
-                    r.key.variant.label == variant.label && r.key.instance_id == task.instance_id
-                })
-                .and_then(|r| r.error.clone());
-            failures.push((variant.label.clone(), task.instance_id.clone(), error));
         }
     }
     if failures.is_empty() {
@@ -591,11 +631,11 @@ fn print_failure_summary(report: &report::Report, out: &Path) {
 
     println!();
     println!("Failure summary:");
-    for (label, instance_id, error) in failures {
+    for (label, trial, instance_id, error) in failures {
         if let Some(err) = error {
-            println!("  [{label}] {instance_id}: {err}");
+            println!("  [{label} t{trial}] {instance_id}: {err}");
         } else {
-            println!("  [{label}] {instance_id}: unresolved (patch did not pass tests)");
+            println!("  [{label} t{trial}] {instance_id}: unresolved (patch did not pass tests)");
         }
     }
 }
@@ -732,10 +772,10 @@ mod tests {
     fn finalize_harness_summary_copies_raw_to_stable() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join("harness")).expect("harness dir");
-        let raw = harness_raw_path(dir.path(), "a");
+        let raw = harness_raw_path(dir.path(), "a", 1);
         fs::write(raw, r#"{"resolved_ids":["astropy__astropy-12907"]}"#).expect("write raw");
-        finalize_harness_summary(dir.path(), "a").expect("finalize");
-        let stable = harness_path(dir.path(), "a");
+        finalize_harness_summary(dir.path(), "a", 1).expect("finalize");
+        let stable = harness_path(dir.path(), "a", 1);
         let contents = fs::read_to_string(stable).expect("read stable");
         assert!(contents.contains("astropy__astropy-12907"));
     }
@@ -753,8 +793,28 @@ mod tests {
             label: "gamma".to_string(),
         };
         assert_eq!(variant.model_name_or_path(), "clawmark/gamma");
-        assert_eq!(variant.run_id(), "clawmark-gamma");
+        assert_eq!(variant.run_id(2), "clawmark-gamma-t2");
         let hash = crate::results::variant_hash(b"test");
         assert_eq!(hash.len(), 64);
+    }
+
+    #[test]
+    fn run_key_trial_defaults_to_one_on_old_records() {
+        let json = r#"{"variant":{"index":0,"label":"a"},"variant_hash":"abc","instance_id":"astropy__astropy-12907"}"#;
+        let key: RunKey = serde_json::from_str(json).expect("deserialize old RunKey");
+        assert_eq!(key.trial, 1);
+    }
+
+    #[test]
+    fn run_id_includes_trial() {
+        let variant = VariantId {
+            index: 0,
+            label: "a".to_string(),
+        };
+        assert_eq!(variant.run_id(2), "clawmark-a-t2");
+        let raw = harness_raw_path(Path::new("/abs/out"), "a", 2);
+        assert!(raw
+            .to_string_lossy()
+            .ends_with("clawmark__a.clawmark-a-t2.json"));
     }
 }

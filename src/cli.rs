@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MIN_TIMEOUT_SECS: u64 = 1;
 pub const MAX_TIMEOUT_SECS: u64 = 86_400;
+pub const MAX_TRIALS: u16 = 10;
 
 /// The coding-agent CLI used to attempt a task. Defaults to Claude to preserve
 /// the original behavior; Cursor uses the `cursor-agent` CLI.
@@ -105,6 +106,9 @@ pub struct RunArgs {
     /// Comma-separated instance IDs to run (must exist in the dataset).
     #[arg(long)]
     pub instances: Option<String>,
+    /// Number of trials per variant/task pair (1-10, default 1).
+    #[arg(long)]
+    pub trials: Option<u16>,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -124,6 +128,7 @@ pub struct ValidatedRunArgs {
     pub parallel: usize,
     pub tasks: Vec<crate::swebench::TaskInstance>,
     pub dataset_source: String,
+    pub trials: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +190,14 @@ impl RunArgs {
 
         let (tasks, dataset_source) = self.load_and_validate_tasks()?;
 
+        let trials = match self.trials {
+            None => 1,
+            Some(n) if (1..=MAX_TRIALS).contains(&n) => u32::from(n),
+            Some(_) => {
+                return Err(format!("--trials must be between 1 and {MAX_TRIALS}"));
+            }
+        };
+
         Ok(ValidatedRunArgs {
             variants,
             timeout_secs: self.timeout_secs,
@@ -192,6 +205,7 @@ impl RunArgs {
             parallel,
             tasks,
             dataset_source,
+            trials,
         })
     }
 
@@ -585,6 +599,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         }
     }
 
@@ -658,6 +673,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -687,6 +703,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -737,6 +754,7 @@ mod tests {
             parallel: Some(0),
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -766,6 +784,7 @@ mod tests {
             parallel: Some(1),
             dataset: None,
             instances: None,
+            trials: None,
         };
         let validated = args.validate_with_cwd(dir.path()).expect("should accept 1");
         assert_eq!(validated.parallel, 1);
@@ -793,6 +812,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -823,6 +843,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -866,6 +887,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -899,6 +921,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -929,6 +952,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -976,6 +1000,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1008,6 +1033,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1039,6 +1065,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1071,6 +1098,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1103,6 +1131,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1135,6 +1164,7 @@ mod tests {
             parallel: None,
             dataset: None,
             instances: None,
+            trials: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1258,5 +1288,56 @@ mod tests {
             .validate_with_cwd(dir.path())
             .expect_err("expected validation error");
         assert!(err.contains("no tasks selected"));
+    }
+
+    #[test]
+    fn trials_defaults_to_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let args = valid_alias_run_args(dir.path(), a, b, "out");
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        assert_eq!(validated.trials, 1);
+    }
+
+    #[test]
+    fn trials_accepts_max() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.trials = Some(MAX_TRIALS);
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        assert_eq!(validated.trials, u32::from(MAX_TRIALS));
+    }
+
+    #[test]
+    fn trials_rejects_zero() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.trials = Some(0);
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("--trials must be between 1 and 10"));
+    }
+
+    #[test]
+    fn trials_rejects_above_max() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.trials = Some(MAX_TRIALS + 1);
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("--trials must be between 1 and 10"));
     }
 }
