@@ -17,7 +17,7 @@
 
 **Does not ship in v1:**
 
-Items struck through below shipped later under `docs/tier1-plan.md`: trials > 1, Wilson confidence intervals, McNemar's test, partial SWE-bench Lite subsets via custom datasets, resume.
+Some items below shipped after v1 (see `docs/cli.md`): trials > 1, Wilson confidence intervals, McNemar's test, partial SWE-bench Lite subsets via custom datasets, resume.
 
 - More than two variants per run
 - Trials greater than 1
