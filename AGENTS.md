@@ -14,21 +14,19 @@ Be concise. Answer the question directly; skip preamble, long tables, and repeat
 
 The full phased implementation plan (architecture, types, security rules, milestones) lives in a local `PLAN.md`.
 
-`PLAN.md` is gitignored — it is a maintainer-local working document and is not committed, so it will not be present in a fresh public clone. The committed `README.md` and the per-module doc comments are the source of truth for contributors.
+`PLAN.md` is tracked in this repository (not gitignored) — it is the maintainer working document and is present in a fresh clone. The committed `README.md` and the per-module doc comments remain useful contributor-facing references, but `docs/tier1-plan.md` is the source of truth for Tier 1 work (trials, statistics, custom task sets, resume).
 
 ## Priorities
 
 **Minimize dependencies.** Before adding any crate, ask: can this be done with std? If a dep saves fewer than ~50 lines of non-trivial code, use std instead. Every new dependency must be justified in PLAN.md's dependency rationale table before it is added to `Cargo.toml`.
 
-**No scope creep.** Implement exactly what PLAN.md specifies for the current phase — nothing more. Do not add flags, config fields, abstractions, or error variants that aren't required by the phase's deliverables. If something seems like a natural extension, note it in a comment or TODO, but do not implement it.
+**No scope creep.** Implement exactly what PLAN.md (or, for Tier 1 work, `docs/tier1-plan.md`) specifies for the current phase — nothing more. Do not add flags, config fields, abstractions, or error variants that aren't required by the phase's deliverables. If something seems like a natural extension, note it in a comment or TODO, but do not implement it.
 
-**Protect the minimal v1.** v1 is only `doctor`, `run --a <path> --b <path> --model <model> [--model-a <model>] [--model-b <model>] --timeout-secs <seconds> --out <dir> [--parallel N]`, and `report --out <dir> [--show-patches]` for local SWE-bench Lite A/B testing. Do not add N-variant matrices, repeated trials, pass@k, McNemar/Wilson statistics, resume/retry systems, plugin APIs, cloud/remote execution, progress UI, release automation, or aggregate cost caps unless PLAN.md is intentionally expanded first. Per-variant time, token, and cost REPORTING is in scope (intentionally expanded); budget enforcement, per-task cost caps, and whole-run accounting beyond reporting remain out of scope.
+**v1 scope was superseded.** Trials greater than 1, Wilson confidence intervals, McNemar's exact test, custom SWE-bench Lite subsets (`--dataset`/`--instances`), and resuming interrupted runs (`--resume`) are now in scope per `docs/tier1-plan.md`. Per-variant time, token, and cost REPORTING remains in scope; budget enforcement, per-task cost caps, and whole-run accounting beyond reporting remain out of scope.
 
 **Prefer direct A/B concepts.** Use fixed variant slots `A` and `B`, simple output files (`a.jsonl`, `b.jsonl`, `a.json`, `b.json`), and win/loss/tie report metrics. Avoid generic benchmark abstractions until there is a second benchmark target.
 
-**Ship the smoke runner first.** If only one thing can work, it must be the reliable bundled 5-task A/B smoke runner. Do not add partial support for all 300 SWE-bench Lite tasks in v1.
-
-**Use the fixed smoke set.** v1 runs exactly `astropy__astropy-12907`, `astropy__astropy-14182`, `astropy__astropy-14365`, `astropy__astropy-14995`, and `astropy__astropy-6938`, in that order. `data/swebench_lite_v1_subset.jsonl` must contain exactly those five unique IDs.
+**Ship the smoke runner first.** The bundled 5-task A/B smoke runner remains the reliable default. The bundled 5-task set (`data/swebench_lite_v1_subset.jsonl`) is the *default* task set, not the only option — `--dataset`/`--instances` allow selecting a custom SWE-bench Lite test-split subset per `docs/tier1-plan.md`.
 
 **CLI-only v1.** Require run parameters on the CLI. Do not add `clawmark.toml`, config-file parsing, or the `toml` crate.
 

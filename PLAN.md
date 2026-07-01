@@ -16,6 +16,9 @@
 - Per-variant time/token/cost reporting is in scope. Token usage and USD cost are captured from the `claude -p --output-format json` output and aggregated per variant in the report. Cost is shown as `n/a` when the CLI does not provide it. Time was already recorded as `elapsed_secs` in `run_records.jsonl`; tokens and cost are newly captured fields. `schema_version` is bumped from 1 to 2 in both `run_records.jsonl` records and `report.json`. No new dependencies are added; parsing uses the existing `serde_json` crate. Budget enforcement, per-task cost caps, and whole-run accounting beyond reporting remain out of scope.
 
 **Does not ship in v1:**
+
+Items struck through below shipped later under `docs/tier1-plan.md`: trials > 1, Wilson confidence intervals, McNemar's test, partial SWE-bench Lite subsets via custom datasets, resume.
+
 - More than two variants per run
 - Trials greater than 1
 - `pass@k`
