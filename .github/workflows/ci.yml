@@ -13,5 +13,17 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-      - run: cargo test
+      # Lint every target and feature (including the `integration`-gated code)
+      # so feature-gated paths cannot bitrot behind the default build.
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --all-features --locked
+      # Ensure the shipped release profile (strip + lto) also compiles.
+      - run: cargo build --release --locked
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to the `rust-version` declared in Cargo.toml. Bump both together.
+      - uses: dtolnay/rust-toolchain@1.79.0
+      - run: cargo build --locked

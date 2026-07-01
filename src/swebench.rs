@@ -83,6 +83,10 @@ pub fn validate_repo_slug(repo: &str) -> Result<(), String> {
 
     let valid_part = |part: &str| {
         !part.is_empty()
+            // Reject `.`/`..` so a slug can never introduce a path-traversal
+            // component into the constructed clone URL.
+            && part != "."
+            && part != ".."
             && part
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-')
@@ -139,6 +143,59 @@ mod tests {
             assert!(!instance.version.is_empty());
             validate_repo_slug(&instance.repo).expect("repo slug");
             validate_base_commit(&instance.base_commit).expect("base commit");
+        }
+    }
+
+    #[test]
+    fn validate_repo_slug_accepts_well_formed_slugs() {
+        for slug in ["astropy/astropy", "owner_1/repo.name", "a-b/c-d"] {
+            validate_repo_slug(slug).unwrap_or_else(|e| panic!("{slug} should be valid: {e}"));
+        }
+    }
+
+    #[test]
+    fn validate_repo_slug_rejects_malformed_and_traversal() {
+        // No slash, empty parts, path traversal, and injection-flavored inputs.
+        for slug in [
+            "noslash",
+            "",
+            "/repo",
+            "owner/",
+            "../repo",
+            "owner/..",
+            ".././..",
+            "owner/re po",
+            "owner/repo\nrm -rf",
+            "owner/repo;whoami",
+            "own er/repo",
+        ] {
+            assert!(
+                validate_repo_slug(slug).is_err(),
+                "{slug:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_base_commit_accepts_full_sha1() {
+        validate_base_commit("d16bfe05a744909de4b27f5875fe0d4ed41ce607").expect("valid sha");
+    }
+
+    #[test]
+    fn validate_base_commit_rejects_bad_shapes() {
+        for commit in [
+            "",
+            "abc123",                                    // too short
+            "d16bfe05a744909de4b27f5875fe0d4ed41ce60",   // 39 chars
+            "d16bfe05a744909de4b27f5875fe0d4ed41ce6077", // 41 chars
+            "D16BFE05A744909DE4B27F5875FE0D4ED41CE607",  // uppercase not allowed
+            "g16bfe05a744909de4b27f5875fe0d4ed41ce607",  // non-hex char
+            "d16bfe05a744909de4b27f5875fe0d4ed41ce60 ",  // trailing space
+        ] {
+            assert!(
+                validate_base_commit(commit).is_err(),
+                "{commit:?} should be rejected"
+            );
         }
     }
 

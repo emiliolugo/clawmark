@@ -716,6 +716,40 @@ mod tests {
     }
 
     #[test]
+    fn run_process_with_timeout_kills_overrunning_process() {
+        // `sleep 30` far exceeds the 1s budget, so it must be killed and
+        // reported as a timeout rather than blocking for the full duration.
+        let argv = vec![OsString::from("30")];
+        let started = Instant::now();
+        let result = run_process_with_timeout("sleep", &argv, Path::new("."), 1);
+        let elapsed = started.elapsed();
+
+        let err = result.expect_err("sleep 30 should time out under a 1s budget");
+        assert!(err.contains("timed out"), "unexpected error: {err}");
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "timeout should fire promptly, took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn run_process_with_timeout_returns_output_for_fast_process() {
+        let argv = vec![OsString::from("clawmark-ok")];
+        let output = run_process_with_timeout("echo", &argv, Path::new("."), 30)
+            .expect("echo should complete within budget");
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("clawmark-ok"));
+    }
+
+    #[test]
+    fn run_process_with_timeout_reports_spawn_failure() {
+        let err =
+            run_process_with_timeout("clawmark-nonexistent-binary-xyz", &[], Path::new("."), 5)
+                .expect_err("spawning a missing binary should fail");
+        assert!(err.contains("failed to spawn"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn parse_claude_usage_defaults_on_garbage() {
         let usage = parse_claude_usage(b"not json");
         assert_eq!(usage, ClaudeUsage::default());
