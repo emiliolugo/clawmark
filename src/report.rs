@@ -5,12 +5,11 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::results::{
-    harness_path, load_harness_results, load_run_records, load_variants_manifest,
-    write_atomic_json, HarnessResult, REPORT_FILE, RUN_RECORDS_FILE, SCHEMA_VERSION,
+    harness_path, load_harness_results, load_run_meta, load_run_records, load_variants_manifest,
+    write_atomic_json, HarnessResult, REPORT_FILE, RUN_META_FILE, RUN_RECORDS_FILE, SCHEMA_VERSION,
     V1_HARNESS_A_FILE, V1_HARNESS_B_FILE, VARIANTS_FILE,
 };
 use crate::runner::RunRecord;
-use crate::swebench::SMOKE_INSTANCE_IDS;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskRow {
@@ -71,6 +70,21 @@ pub fn compute_report(out: &Path) -> Result<Report, String> {
         return Err("variants.json must contain at least two variants".to_string());
     }
 
+    let meta_path = out.join(RUN_META_FILE);
+    if !meta_path.is_file() {
+        return Err(
+            "run produced with an older clawmark (schema < 4); re-run to get a current report"
+                .to_string(),
+        );
+    }
+    let meta = load_run_meta(&meta_path)?;
+    if meta.schema_version != SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported run schema_version {} (expected {SCHEMA_VERSION}); re-run",
+            meta.schema_version
+        ));
+    }
+
     let mut harnesses = Vec::with_capacity(variants.len());
     for variant in &variants {
         harnesses.push((
@@ -87,6 +101,7 @@ pub fn compute_report(out: &Path) -> Result<Report, String> {
             .collect::<Vec<_>>(),
         &harnesses,
         &records,
+        &meta.instance_ids,
     ))
 }
 
@@ -95,8 +110,9 @@ pub fn aggregate_report(
     variants: &[(String, String)],
     harnesses: &[(String, HarnessResult)],
     records: &[RunRecord],
+    instance_ids: &[String],
 ) -> Report {
-    let total_tasks = SMOKE_INSTANCE_IDS.len();
+    let total_tasks = instance_ids.len();
     let mut per_task = Vec::with_capacity(total_tasks);
 
     let mut resolved_sets = Vec::with_capacity(harnesses.len());
@@ -105,13 +121,13 @@ pub fn aggregate_report(
         resolved_sets.push(set);
     }
 
-    for instance_id in SMOKE_INSTANCE_IDS {
+    for instance_id in instance_ids {
         let mut row = Vec::with_capacity(resolved_sets.len());
         for set in &resolved_sets {
-            row.push(set.contains(instance_id));
+            row.push(set.contains(instance_id.as_str()));
         }
         per_task.push(TaskRow {
-            instance_id: instance_id.to_string(),
+            instance_id: instance_id.clone(),
             resolved: row,
         });
     }
@@ -248,17 +264,18 @@ pub fn write_report_json(out: &Path, report: &Report) -> Result<(), String> {
 pub fn render_patches(out: &Path) -> Result<(), String> {
     let records = load_run_records(&out.join(RUN_RECORDS_FILE))?;
     let variants = load_variants_manifest(&out.join(VARIANTS_FILE))?;
+    let meta = load_run_meta(&out.join(RUN_META_FILE))?;
 
     println!();
     println!("Patches:");
     println!("---------");
-    for instance_id in SMOKE_INSTANCE_IDS {
+    for instance_id in &meta.instance_ids {
         println!("{instance_id}");
         for variant in &variants {
             println!("  [{}]:", variant.label);
             let patch = records
                 .iter()
-                .find(|r| r.key.variant.label == variant.label && r.key.instance_id == instance_id)
+                .find(|r| r.key.variant.label == variant.label && &r.key.instance_id == instance_id)
                 .map_or("", |r| r.prediction.model_patch.as_str());
 
             if patch.is_empty() {
@@ -290,6 +307,13 @@ mod tests {
         HarnessResult {
             resolved_ids: resolved.iter().map(|id| (*id).to_string()).collect(),
         }
+    }
+
+    fn bundled_ids() -> Vec<String> {
+        crate::swebench::SMOKE_INSTANCE_IDS
+            .iter()
+            .map(|id| (*id).to_string())
+            .collect()
     }
 
     fn make_record(label: &str, elapsed_secs: f64, usage: Option<ClaudeUsage>) -> RunRecord {
@@ -329,7 +353,7 @@ mod tests {
             ),
             ("c".to_string(), harness(&[])),
         ];
-        let report = aggregate_report(&variants, &harnesses, &[]);
+        let report = aggregate_report(&variants, &harnesses, &[], &bundled_ids());
         assert_eq!(report.total_tasks, 5);
         assert_eq!(report.variants.len(), 3);
         assert_eq!(report.per_task.len(), 5);
@@ -370,7 +394,7 @@ mod tests {
                 }),
             ),
         ];
-        let report = aggregate_report(&variants, &harnesses, &records);
+        let report = aggregate_report(&variants, &harnesses, &records, &bundled_ids());
         assert_eq!(report.variants[0].label, "b");
     }
 
@@ -390,5 +414,31 @@ mod tests {
         .expect("b");
         let err = compute_report(dir.path()).expect_err("expected v1 rejection");
         assert!(err.contains("run produced with clawmark v1"));
+    }
+
+    #[test]
+    fn report_rejects_missing_run_meta() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let manifest = vec![
+            crate::results::VariantManifestEntry {
+                index: 0,
+                label: "a".to_string(),
+                path: "a.md".to_string(),
+                hash: "hash-a".to_string(),
+                model: "sonnet".to_string(),
+                agent: crate::cli::AgentBackend::Claude,
+            },
+            crate::results::VariantManifestEntry {
+                index: 1,
+                label: "b".to_string(),
+                path: "b.md".to_string(),
+                hash: "hash-b".to_string(),
+                model: "sonnet".to_string(),
+                agent: crate::cli::AgentBackend::Claude,
+            },
+        ];
+        write_atomic_json(&dir.path().join(VARIANTS_FILE), &manifest).expect("write manifest");
+        let err = compute_report(dir.path()).expect_err("expected missing run_meta rejection");
+        assert!(err.contains("older clawmark"));
     }
 }

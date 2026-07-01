@@ -99,6 +99,12 @@ pub struct RunArgs {
     pub out: PathBuf,
     #[arg(long)]
     pub parallel: Option<u16>,
+    /// Path to a custom task set: JSONL of SWE-bench Lite test-split instances.
+    #[arg(long)]
+    pub dataset: Option<PathBuf>,
+    /// Comma-separated instance IDs to run (must exist in the dataset).
+    #[arg(long)]
+    pub instances: Option<String>,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -116,6 +122,8 @@ pub struct ValidatedRunArgs {
     pub timeout_secs: u64,
     pub out: PathBuf,
     pub parallel: usize,
+    pub tasks: Vec<crate::swebench::TaskInstance>,
+    pub dataset_source: String,
 }
 
 #[derive(Debug, Clone)]
@@ -175,12 +183,70 @@ impl RunArgs {
             self.validate_variant_form(cwd)?
         };
 
+        let (tasks, dataset_source) = self.load_and_validate_tasks()?;
+
         Ok(ValidatedRunArgs {
             variants,
             timeout_secs: self.timeout_secs,
             out: self.out.clone(),
             parallel,
+            tasks,
+            dataset_source,
         })
+    }
+
+    fn load_and_validate_tasks(
+        &self,
+    ) -> Result<(Vec<crate::swebench::TaskInstance>, String), String> {
+        let (tasks, dataset_source) = match &self.dataset {
+            Some(path) => {
+                let metadata = fs::metadata(path)
+                    .map_err(|e| format!("dataset path {}: {e}", path.display()))?;
+                if !metadata.is_file() {
+                    return Err(format!(
+                        "dataset path {} must be a regular file",
+                        path.display()
+                    ));
+                }
+                let tasks = crate::swebench::load_task_instances_jsonl(path)?;
+                let canonical = path
+                    .canonicalize()
+                    .map_err(|e| format!("dataset path {}: {e}", path.display()))?;
+                (tasks, canonical.display().to_string())
+            }
+            None => (
+                crate::swebench::load_bundled_smoke_set()?,
+                "bundled".to_string(),
+            ),
+        };
+
+        let mut seen_ids: HashSet<String> = HashSet::new();
+        for instance in &tasks {
+            crate::swebench::validate_repo_slug(&instance.repo)
+                .map_err(|e| format!("dataset instance {}: {e}", instance.instance_id))?;
+            crate::swebench::validate_base_commit(&instance.base_commit)
+                .map_err(|e| format!("dataset instance {}: {e}", instance.instance_id))?;
+            if !seen_ids.insert(instance.instance_id.clone()) {
+                return Err(format!(
+                    "duplicate instance_id in dataset: {}",
+                    instance.instance_id
+                ));
+            }
+        }
+
+        let tasks = match &self.instances {
+            Some(raw) => apply_instances_filter(tasks, raw)?,
+            None => tasks,
+        };
+
+        if tasks.is_empty() {
+            return Err(
+                "no tasks selected; dataset or --instances filter produced an empty set"
+                    .to_string(),
+            );
+        }
+
+        Ok((tasks, dataset_source))
     }
 
     fn validate_ab_form(&self, cwd: &Path) -> Result<Vec<ValidatedVariant>, String> {
@@ -326,6 +392,43 @@ impl ReportArgs {
     pub fn validate(&self) -> Result<(), String> {
         validate_report_out_dir(&self.out)
     }
+}
+
+fn apply_instances_filter(
+    tasks: Vec<crate::swebench::TaskInstance>,
+    raw: &str,
+) -> Result<Vec<crate::swebench::TaskInstance>, String> {
+    let mut requested: Vec<String> = Vec::new();
+    let mut seen_requested: HashSet<String> = HashSet::new();
+    for token in raw.split(',') {
+        let id = token.trim();
+        if id.is_empty() {
+            return Err("--instances contains an empty entry".to_string());
+        }
+        if !seen_requested.insert(id.to_string()) {
+            return Err(format!("duplicate instance id in --instances: {id}"));
+        }
+        requested.push(id.to_string());
+    }
+
+    let dataset_ids: HashSet<&str> = tasks.iter().map(|t| t.instance_id.as_str()).collect();
+    let missing: Vec<&str> = requested
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !dataset_ids.contains(id))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "instance ids not found in dataset: {}",
+            missing.join(",")
+        ));
+    }
+
+    let requested_set: HashSet<&str> = requested.iter().map(String::as_str).collect();
+    Ok(tasks
+        .into_iter()
+        .filter(|t| requested_set.contains(t.instance_id.as_str()))
+        .collect())
 }
 
 fn validate_variant_path(path: &Path, cwd: &Path) -> Result<PathBuf, String> {
@@ -480,6 +583,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.join(out_name),
             parallel: None,
+            dataset: None,
+            instances: None,
         }
     }
 
@@ -551,6 +656,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -578,6 +685,8 @@ mod tests {
             timeout_secs: 0,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -626,6 +735,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: Some(0),
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -653,6 +764,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: Some(1),
+            dataset: None,
+            instances: None,
         };
         let validated = args.validate_with_cwd(dir.path()).expect("should accept 1");
         assert_eq!(validated.parallel, 1);
@@ -678,6 +791,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -706,6 +821,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -747,6 +864,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -778,6 +897,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let validated = args
             .validate_with_cwd(dir.path())
@@ -806,6 +927,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -851,6 +974,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -881,6 +1006,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -910,6 +1037,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -940,6 +1069,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -970,6 +1101,8 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
@@ -1000,10 +1133,130 @@ mod tests {
             timeout_secs: 300,
             out: dir.path().join("out"),
             parallel: None,
+            dataset: None,
+            instances: None,
         };
         let err = args
             .validate_with_cwd(dir.path())
             .expect_err("expected validation error");
         assert!(err.contains("exactly one input form"));
+    }
+
+    fn task_instance_line(instance_id: &str) -> String {
+        format!(
+            r#"{{"instance_id":"{instance_id}","repo":"octo/repo","base_commit":"{}","problem_statement":"fix it","hints_text":null,"version":"1.0"}}"#,
+            "a".repeat(40)
+        )
+    }
+
+    #[test]
+    fn dataset_flag_loads_custom_jsonl() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let dataset_path = dir.path().join("tasks.jsonl");
+        fs::write(
+            &dataset_path,
+            format!(
+                "{}\n{}\n",
+                task_instance_line("octo__repo-1"),
+                task_instance_line("octo__repo-2")
+            ),
+        )
+        .expect("write dataset");
+
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.dataset = Some(dataset_path);
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        assert_eq!(validated.tasks.len(), 2);
+        assert!(validated.dataset_source.ends_with("tasks.jsonl"));
+    }
+
+    #[test]
+    fn dataset_rejects_duplicate_instance_ids() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let dataset_path = dir.path().join("tasks.jsonl");
+        fs::write(
+            &dataset_path,
+            format!(
+                "{}\n{}\n",
+                task_instance_line("octo__repo-1"),
+                task_instance_line("octo__repo-1")
+            ),
+        )
+        .expect("write dataset");
+
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.dataset = Some(dataset_path);
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("duplicate instance_id in dataset"));
+    }
+
+    #[test]
+    fn instances_filters_bundled_set_in_dataset_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.instances = Some("astropy__astropy-14365,astropy__astropy-12907".to_string());
+        let validated = args
+            .validate_with_cwd(dir.path())
+            .expect("validation should succeed");
+        let ids: Vec<&str> = validated
+            .tasks
+            .iter()
+            .map(|t| t.instance_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["astropy__astropy-12907", "astropy__astropy-14365"]
+        );
+    }
+
+    #[test]
+    fn instances_rejects_unknown_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.instances = Some("does-not-exist".to_string());
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("does-not-exist"));
+    }
+
+    #[test]
+    fn instances_rejects_empty_entry() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.instances = Some("astropy__astropy-12907,,astropy__astropy-14182".to_string());
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("--instances contains an empty entry"));
+    }
+
+    #[test]
+    fn empty_selection_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_file(dir.path(), "a.md", "a");
+        let b = write_file(dir.path(), "b.md", "b");
+        let dataset_path = dir.path().join("tasks.jsonl");
+        fs::write(&dataset_path, "\n\n").expect("write dataset");
+        let mut args = valid_alias_run_args(dir.path(), a, b, "out");
+        args.dataset = Some(dataset_path);
+        let err = args
+            .validate_with_cwd(dir.path())
+            .expect_err("expected validation error");
+        assert!(err.contains("no tasks selected"));
     }
 }

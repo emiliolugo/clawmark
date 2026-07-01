@@ -11,11 +11,12 @@ use tempfile::NamedTempFile;
 use crate::runner::RunRecord;
 use crate::swebench::{Prediction, SMOKE_INSTANCE_IDS};
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 pub const RUN_RECORDS_FILE: &str = "run_records.jsonl";
 pub const REPORT_FILE: &str = "report.json";
 pub const VARIANTS_FILE: &str = "variants.json";
+pub const RUN_META_FILE: &str = "run_meta.json";
 
 pub const V1_HARNESS_A_FILE: &str = "harness/a.json";
 pub const V1_HARNESS_B_FILE: &str = "harness/b.json";
@@ -198,6 +199,21 @@ pub fn load_variants_manifest(path: &Path) -> Result<Vec<VariantManifestEntry>, 
         .map_err(|e| format!("failed to open variants manifest {}: {e}", path.display()))?;
     serde_json::from_reader(file)
         .map_err(|e| format!("failed to parse variants manifest {}: {e}", path.display()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunMeta {
+    pub schema_version: u32,
+    pub trials: u32,
+    pub dataset_source: String,
+    pub instance_ids: Vec<String>,
+}
+
+pub fn load_run_meta(path: &Path) -> Result<RunMeta, String> {
+    let file =
+        File::open(path).map_err(|e| format!("failed to open run meta {}: {e}", path.display()))?;
+    serde_json::from_reader(file)
+        .map_err(|e| format!("failed to parse run meta {}: {e}", path.display()))
 }
 
 pub fn predictions_path(out: &Path, label: &str) -> PathBuf {

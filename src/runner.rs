@@ -13,11 +13,11 @@ use crate::cli::{AgentBackend, ValidatedRunArgs, ValidatedVariant};
 use crate::report;
 use crate::results::{
     append_run_record, harness_path, harness_raw_path, load_run_records, predictions_path,
-    write_atomic_json, write_predictions_jsonl, SwebenchPrediction, VariantManifestEntry,
-    RUN_RECORDS_FILE, SCHEMA_VERSION, VARIANTS_FILE,
+    write_atomic_json, write_predictions_jsonl, RunMeta, SwebenchPrediction, VariantManifestEntry,
+    RUN_META_FILE, RUN_RECORDS_FILE, SCHEMA_VERSION, VARIANTS_FILE,
 };
 use crate::sandbox;
-use crate::swebench::{self, Prediction, TaskInstance, SMOKE_INSTANCE_IDS};
+use crate::swebench::{Prediction, TaskInstance};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VariantId {
@@ -69,7 +69,7 @@ enum AgentOutcome {
 }
 
 pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
-    let tasks = swebench::load_bundled_smoke_set()?;
+    let tasks = &args.tasks;
     let invocations = args.variants.len() * tasks.len();
     println!(
         "{} variants x {} tasks x 1 trial = {} agent invocations",
@@ -103,12 +103,21 @@ pub async fn run_all(args: &ValidatedRunArgs) -> Result<(), String> {
         .collect();
     write_atomic_json(&args.out.join(VARIANTS_FILE), &manifest)?;
 
+    let instance_ids: Vec<String> = tasks.iter().map(|t| t.instance_id.clone()).collect();
+    let meta = RunMeta {
+        schema_version: SCHEMA_VERSION,
+        trials: 1,
+        dataset_source: args.dataset_source.clone(),
+        instance_ids: instance_ids.clone(),
+    };
+    write_atomic_json(&args.out.join(RUN_META_FILE), &meta)?;
+
     let run_records = args.out.join(RUN_RECORDS_FILE);
     for variant in &args.variants {
-        run_variant(variant, &tasks, args, &run_records).await?;
+        run_variant(variant, tasks, args, &run_records).await?;
     }
     for variant in &args.variants {
-        invoke_harness(&variant.label, &args.out, args.timeout_secs)?;
+        invoke_harness(&variant.label, &args.out, args.timeout_secs, &instance_ids)?;
     }
 
     let computed = report::compute_report(&args.out)?;
@@ -511,14 +520,19 @@ fn parse_claude_usage(stdout: &[u8]) -> ClaudeUsage {
     }
 }
 
-pub fn invoke_harness(label: &str, out: &Path, timeout_secs: u64) -> Result<(), String> {
+pub fn invoke_harness(
+    label: &str,
+    out: &Path,
+    timeout_secs: u64,
+    instance_ids: &[String],
+) -> Result<(), String> {
     let harness_dir = out.join("harness");
     let abs_out = out
         .canonicalize()
         .map_err(|e| format!("failed to resolve output directory {}: {e}", out.display()))?;
     let predictions = predictions_path(&abs_out, label);
     let run_id = format!("clawmark-{label}");
-    let argv = harness_argv(&predictions, &run_id, timeout_secs);
+    let argv = harness_argv(&predictions, &run_id, timeout_secs, instance_ids);
     let status = Command::new("python3")
         .args(&argv)
         .current_dir(&harness_dir)
@@ -586,7 +600,12 @@ fn print_failure_summary(report: &report::Report, out: &Path) {
     }
 }
 
-fn harness_argv(predictions: &Path, run_id: &str, timeout_secs: u64) -> Vec<OsString> {
+fn harness_argv(
+    predictions: &Path,
+    run_id: &str,
+    timeout_secs: u64,
+    instance_ids: &[String],
+) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec![
         OsString::from("-m"),
         OsString::from("swebench.harness.run_evaluation"),
@@ -598,7 +617,7 @@ fn harness_argv(predictions: &Path, run_id: &str, timeout_secs: u64) -> Vec<OsSt
         predictions.as_os_str().to_os_string(),
         OsString::from("--instance_ids"),
     ];
-    for id in SMOKE_INSTANCE_IDS {
+    for id in instance_ids {
         argv.push(OsString::from(id));
     }
     argv.push(OsString::from("--max_workers"));
@@ -687,7 +706,13 @@ mod tests {
 
     #[test]
     fn harness_argv_contains_required_flags_and_instances() {
-        let argv = harness_argv(Path::new("/abs/out/predictions/a.jsonl"), "clawmark-a", 300);
+        let instance_ids = vec!["astropy__astropy-12907".to_string()];
+        let argv = harness_argv(
+            Path::new("/abs/out/predictions/a.jsonl"),
+            "clawmark-a",
+            300,
+            &instance_ids,
+        );
         let strings: Vec<String> = argv
             .iter()
             .map(|s| s.to_string_lossy().into_owned())
