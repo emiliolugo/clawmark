@@ -162,7 +162,15 @@ async fn run_variant(
             println!("[{variant_label}] {instance_id}");
 
             let record_result = tokio::task::spawn_blocking(move || {
-                run_single(&variant_id, &vh, vc.as_slice(), &task, &model, agent, timeout_secs)
+                run_single(
+                    &variant_id,
+                    &vh,
+                    vc.as_slice(),
+                    &task,
+                    &model,
+                    agent,
+                    timeout_secs,
+                )
             })
             .await
             .map_err(|e| format!("task panicked: {e}"))?;
@@ -414,8 +422,7 @@ fn cursor_error_message(stdout: &[u8]) -> Option<String> {
         .get("is_error")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    let subtype_error =
-        value.get("subtype").and_then(serde_json::Value::as_str) == Some("error");
+    let subtype_error = value.get("subtype").and_then(serde_json::Value::as_str) == Some("error");
     if !is_error && !subtype_error {
         return None;
     }

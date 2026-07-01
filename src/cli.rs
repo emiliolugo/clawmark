@@ -53,7 +53,7 @@ pub enum Commands {
     /// Validate local prerequisites before a run
     Doctor,
     /// Run variants against the bundled smoke set
-    Run(RunArgs),
+    Run(Box<RunArgs>),
     /// Read existing output and print the leaderboard summary
     Report(ReportArgs),
 }
